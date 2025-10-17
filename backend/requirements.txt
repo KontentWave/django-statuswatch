@@ -9,3 +9,4 @@ redis
 gunicorn
 whitenoise
 psycopg[binary]
+django-environ>=0.11,<0.12
