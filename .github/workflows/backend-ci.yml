@@ -1,27 +1,9 @@
-Thanks😘
-I've tried 
-```
-git commit --allow-empty -m "chore(ci): trigger backend CI"
-git push
-```
-And actually I found the reason:
----
-
-Workflow file for this run
-.github/workflows/backend-ci.yml at 22c2428
-    : backend-ci
-
-Check failure on line 1 in .github/workflows/backend-ci.yml
-GitHub Actions / .github/workflows/backend-ci.yml
-
-Invalid workflow file
-
-You have an error in your yaml syntax
-
+name: Backend CI
 
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -34,7 +16,8 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: devpass
           POSTGRES_DB: dj01
-        ports: ["5432:5432"]
+        ports:
+          - "5432:5432"
         options: >-
           --health-cmd="pg_isready -U postgres -d dj01"
           --health-interval=10s
@@ -42,12 +25,14 @@ jobs:
           --health-retries=5
       redis:
         image: redis:7
-        ports: ["6379:6379"]
+        ports:
+          - "6379:6379"
         options: >-
           --health-cmd="redis-cli ping || exit 1"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
+
     env:
       DATABASE_URL: postgresql://postgres:devpass@localhost:5432/dj01
       REDIS_URL: redis://localhost:6379/0
@@ -73,12 +58,16 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -r requirements-dev.txt
+
       - name: Run tests (allow empty)
-          run: |
-            python -m pytest -q || code=$?; if [ "$code" -eq 5 ]; then
-              echo "No tests collected; skipping.";
-              exit 0;
-            else
-              exit "$code";
-            fi
----
+        run: |
+          set +e
+          python -m pytest -q
+          ec=$?
+          set -e
+          if [ "$ec" -eq 5 ]; then
+            echo "No tests collected; skipping."
+            exit 0
+          else
+            exit "$ec"
+          fi
