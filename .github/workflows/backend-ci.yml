@@ -15,25 +15,20 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: devpass
           POSTGRES_DB: dj01
-        ports: ['5432:5432']
+        ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U postgres -d dj01"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd="pg_isready -U postgres -d dj01"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
       redis:
         image: redis:7
-        ports: ['6379:6379']
+        ports: ["6379:6379"]
         options: >-
-          --health-cmd "redis-cli ping || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    # Run all steps from the Django project folder
-    defaults:
-      run:
-        working-directory: backend
+          --health-cmd="redis-cli ping || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
     env:
       DATABASE_URL: postgresql://postgres:devpass@localhost:5432/dj01
@@ -41,15 +36,19 @@ jobs:
       STRIPE_PUBLIC_KEY: pk_test_dummy
       STRIPE_SECRET_KEY: sk_test_dummy
       DJANGO_SETTINGS_MODULE: app.settings
-      PYTHONUNBUFFERED: 1
+      PYTHONUNBUFFERED: "1"
+
+    defaults:
+      run:
+        working-directory: backend
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          python-version: "3.12"
+          cache: pip
           cache-dependency-path: backend/requirements*.txt
 
       - name: Install deps
@@ -57,10 +56,6 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements-dev.txt
 
-      - name: Migrate DB (shared & tenants)
-        run: |
-          python manage.py migrate_schemas --shared --noinput
-          python manage.py migrate_schemas --tenant --noinput
-
       - name: Run tests
-        run: pytest -q
+        run: |
+          python -m pytest -q
