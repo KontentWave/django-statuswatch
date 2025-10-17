@@ -1,0 +1,35 @@
+# ---- python / django ----
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+*.log
+.env
+.env.*
+!.env.example
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+staticfiles/
+media/
+
+# ---- node / vite ----
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.eslintcache
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# ---- tooling ----
+.idea/
+.DS_Store
+Thumbs.db
+
+# keep VS Code workspace files committed
+!.vscode/

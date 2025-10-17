@@ -1,0 +1,11 @@
+Django==5.2.*
+djangorestframework
+django-tenants
+djangorestframework-simplejwt
+django-cors-headers
+stripe
+celery
+redis
+gunicorn
+whitenoise
+psycopg[binary]
