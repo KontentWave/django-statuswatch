@@ -1,65 +1,30 @@
-import { useState } from "react";
+/* src/App.css */
 
-const API_BASE = "https://acme.statuswatch.local/api"; // dev: call tenant backend via proxy
+/* If you don't already have these in src/index.css, you can keep them here. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-export default function App() {
-  const [token, setToken] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string>("");
+/* Page scaffold */
+html, body, #root {
+  height: 100%;
+}
 
-  async function login() {
-    setMsg("Logging in…");
-    const r = await fetch(`${API_BASE}/auth/token/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "jwt", password: "jwtpass123" }),
-      credentials: "include",
-    });
-    const data = await r.json();
-    if (data.access) {
-      setToken(data.access);
-      setMsg("✅ Logged in");
-    } else {
-      setMsg(`❌ ${data.detail || "Login failed"}`);
-    }
-  }
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
 
-  async function pay() {
-    if (!token) return setMsg("❌ Login first");
-    setMsg("Creating checkout session…");
-    const r = await fetch(`${API_BASE}/pay/create-checkout-session/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ amount: 500, currency: "usd", name: "Demo" }),
-    });
-    const data = await r.json();
-    if (data.url) {
-      window.location.href = data.url;
-    } else {
-      setMsg(`❌ ${data.error || "No URL returned"}`);
-    }
-  }
+/* Handy utility classes used by the demo */
+.container {
+  @apply max-w-3xl mx-auto p-6;
+}
 
-  return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6">StatusWatch (dev)</h1>
-      <div className="flex gap-3">
-        <button
-          onClick={login}
-          className="px-4 py-2 rounded bg-slate-900 text-white"
-        >
-          Login (jwt/jwtpass123)
-        </button>
-        <button
-          onClick={pay}
-          className="px-4 py-2 rounded bg-emerald-600 text-white"
-        >
-          Pay $5
-        </button>
-      </div>
-      <p className="mt-4">{msg}</p>
-    </div>
-  );
+.btn {
+  @apply inline-flex items-center gap-2 px-4 py-2 rounded-md font-medium transition shadow-sm;
+}
+.btn-primary {
+  @apply bg-slate-900 text-white hover:bg-slate-800;
+}
+.btn-success {
+  @apply bg-emerald-600 text-white hover:bg-emerald-500;
 }
