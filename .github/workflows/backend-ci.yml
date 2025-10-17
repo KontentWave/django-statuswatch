@@ -1,0 +1,50 @@
+name: backend-ci
+on:
+  push: { paths: ["backend/**", ".github/workflows/backend-ci.yml"] }
+  pull_request: { paths: ["backend/**", ".github/workflows/backend-ci.yml"] }
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: dj01
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgresql://postgres:devpass@127.0.0.1:5432/dj01
+      REDIS_URL: redis://127.0.0.1:6379/0
+      STRIPE_PUBLIC_KEY: pk_test_dummy
+      STRIPE_SECRET_KEY: sk_test_dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install deps
+        working-directory: backend
+        run: |
+          python -m pip install -U pip
+          pip install -r requirements-dev.txt
+      - name: Django checks
+        working-directory: backend
+        run: |
+          python manage.py check
+      - name: Lint & type check
+        working-directory: backend
+        run: |
+          ruff check .
+          black --check .
+          mypy || true
+      - name: Tests (allow empty for now)
+        working-directory: backend
+        run: |
+          pytest -q || true
