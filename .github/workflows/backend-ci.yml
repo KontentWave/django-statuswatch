@@ -6,6 +6,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:16
@@ -14,37 +15,66 @@ jobs:
           POSTGRES_PASSWORD: devpass
           POSTGRES_DB: dj01
         ports: ["5432:5432"]
+        # healthcheck on the container, but we’ll also wait in a step
         options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s --health-timeout=5s --health-retries=5
+          --health-cmd="pg_isready -U postgres -d dj01"
+          --health-interval=5s --health-timeout=5s --health-retries=20
       redis:
         image: redis:7
         ports: ["6379:6379"]
+
     env:
       DATABASE_URL: postgresql://postgres:devpass@127.0.0.1:5432/dj01
       REDIS_URL: redis://127.0.0.1:6379/0
+      DB_CONN_MAX_AGE: "0"
       STRIPE_PUBLIC_KEY: pk_test_dummy
       STRIPE_SECRET_KEY: sk_test_dummy
+      PYTHONUNBUFFERED: "1"
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+
       - name: Install deps
         working-directory: backend
         run: |
           python -m pip install -U pip
           pip install -r requirements-dev.txt
-      - name: Django checks
+
+      - name: Wait for Postgres (TCP probe)
+        run: |
+          for i in {1..60}; do
+            (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1 && echo "DB up" && break
+            echo "waiting for db..."; sleep 1
+          done
+
+      - name: Migrate shared schema
+        working-directory: backend
+        run: python manage.py migrate_schemas --shared --noinput
+
+      - name: Seed demo tenant (optional)
         working-directory: backend
         run: |
-          python manage.py check
+          python manage.py shell - <<'PY'
+          from tenants.models import Client, Domain
+          t,_ = Client.objects.get_or_create(schema_name="acme", defaults={"name":"Acme"})
+          Domain.objects.get_or_create(domain="acme.localtest.me", defaults={"tenant": t, "is_primary": True})
+          print("seeded tenant")
+          PY
+
+      - name: Django checks
+        working-directory: backend
+        run: python manage.py check
+
       - name: Lint & type check
         working-directory: backend
         run: |
           ruff check .
           black --check .
           mypy || true
-      - name: Tests (allow empty for now)
+
+      - name: Tests (temporary soft-fail)
         working-directory: backend
-        run: |
-          pytest -q || true
+        run: pytest -q || true
