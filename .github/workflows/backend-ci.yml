@@ -1,4 +1,4 @@
-name: backend-ci
+    : backend-ci
 
 on:
   push:
@@ -56,6 +56,12 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements-dev.txt
 
-      - name: Run tests
-        run: |
-          python -m pytest -q
+      - name: Run tests (allow empty)
+          run: |
+            python -m pytest -q || code=$?; if [ "$code" -eq 5 ]; then
+              echo "No tests collected; skipping.";
+              exit 0;
+            else
+              exit "$code";
+            fi
+

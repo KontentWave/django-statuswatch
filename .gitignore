@@ -26,6 +26,10 @@ frontend/.env
 frontend/.env.*
 !frontend/.env.example
 
+# Vite env files (keep secrets out of git)
+frontend/.env
+frontend/.env.*
+
 # ---- tooling ----
 .idea/
 .DS_Store
