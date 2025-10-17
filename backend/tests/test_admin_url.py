@@ -1,15 +1,16 @@
+# tests/test_admin_url.py
 import pytest
-from django.conf import settings
 from django.urls import reverse
 
-_admin_enabled = "django.contrib.admin" in settings.INSTALLED_APPS
+pytestmark = pytest.mark.django_db  # allow DB if anything touches it
 
-pytestmark = pytest.mark.skipif(
-    not _admin_enabled, reason="admin not in INSTALLED_APPS"
-)
+def test_admin_index_route_smoke(client, settings):
+    # Skip tenant resolution for this simple smoke test
+    settings.MIDDLEWARE = [
+        m for m in settings.MIDDLEWARE
+        if m != "django_tenants.middleware.main.TenantMainMiddleware"
+    ]
 
-def test_admin_index_route_smoke(client):
-    url = reverse("admin:index")
-    resp = client.get(url)
-    # Anonymous users usually get a redirect to login; 200 also fine for custom skins
-    assert resp.status_code in {200, 301, 302, 401, 403}
+    resp = client.get(reverse("admin:index"))
+    # unauthenticated users usually get redirected to login
+    assert resp.status_code in (200, 302)
