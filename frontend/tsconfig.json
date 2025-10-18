@@ -13,7 +13,7 @@
     "strict": true,
     "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] },
-    "types": ["vite/client"]
+    "types": ["vite/client", "vitest", "@testing-library/jest-dom"]
   },
   "include": ["src", "vite.config.ts"]
 }

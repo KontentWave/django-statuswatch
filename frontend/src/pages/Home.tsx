@@ -1,40 +1,46 @@
-import { api } from '@/lib/api';
-import { STRIPE_PK } from '@/lib/config';
-import { toast } from 'sonner';
+import { Link } from "@tanstack/react-router";
+import { api } from "@/lib/api";
+import { STRIPE_PK } from "@/lib/config";
+import { toast } from "sonner";
 
 export default function Home() {
   const loginDemo = async () => {
     try {
-      const { data } = await api.post('/auth/token/', {
-        username: 'jwt',
-        password: 'jwtpass123',
+      const { data } = await api.post("/auth/token/", {
+        username: "jwt",
+        password: "jwtpass123",
       });
-      localStorage.setItem('jwt', data.access);
-      toast.success('Logged in (jwt)');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'Login failed');
+      localStorage.setItem("jwt", data.access);
+      toast.success("Logged in (jwt)");
+    } catch (error: unknown) {
+      const detail =
+        typeof error === "object" && error !== null && "response" in error
+          ? (error as { response?: { data?: { detail?: string } } }).response
+              ?.data?.detail
+          : undefined;
+      toast.error(detail ?? "Login failed");
     }
   };
 
   const ping = async () => {
-    const { data } = await api.get('/ping/');
+    const { data } = await api.get("/ping/");
     toast.info(`ping: ${JSON.stringify(data)}`);
   };
 
   const pay = async () => {
     if (!STRIPE_PK) {
-      toast.error('Missing VITE_STRIPE_PUBLIC_KEY');
+      toast.error("Missing VITE_STRIPE_PUBLIC_KEY");
       return;
     }
-    const { data } = await api.post('/pay/create-checkout-session/', {
+    const { data } = await api.post("/pay/create-checkout-session/", {
       amount: 500,
-      currency: 'usd',
-      name: 'Demo',
+      currency: "usd",
+      name: "Demo",
     });
     if (data?.url) {
       window.location.href = data.url;
     } else {
-      toast.error('No checkout URL from backend');
+      toast.error("No checkout URL from backend");
     }
   };
 
@@ -65,6 +71,15 @@ export default function Home() {
           >
             Pay $5
           </button>
+        </div>
+
+        <div>
+          <Link
+            to="/register"
+            className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-400"
+          >
+            Create your organization
+          </Link>
         </div>
 
         <p className="text-sm text-neutral-400">

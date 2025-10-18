@@ -172,8 +172,25 @@ from datetime import timedelta
 
 TENANT_MODEL = "tenants.Client"; DOMAIN_MODEL = "tenants.Domain"; TENANT_DOMAIN_MODEL = "tenants.Domain"; PUBLIC_SCHEMA_NAME = "public"
 
-SHARED_APPS = ["django_tenants","tenants","django.contrib.contenttypes","django.contrib.auth","django.contrib.admin","django.contrib.sessions","django.contrib.messages","django.contrib.staticfiles","rest_framework","api","corsheaders"]
-TENANT_APPS = ["django.contrib.contenttypes","rest_framework","api","payments",]
+SHARED_APPS = [
+    "django_tenants",
+    "tenants",
+    "django.contrib.contenttypes",
+    "django.contrib.staticfiles",
+    "corsheaders",
+    "rest_framework",
+    "api",
+]
+TENANT_APPS = [
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.admin",
+    "rest_framework",
+    "api",
+    "payments",
+]
 INSTALLED_APPS = list(OrderedDict.fromkeys(SHARED_APPS + TENANT_APPS))
 DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
 
