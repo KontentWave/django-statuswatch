@@ -21,7 +21,7 @@ SECRET_KEY = 'django-insecure-4##dqsxc46_pzcfq4nxp%_f)jhaa%0*^tnp#h-(3bok6)%28iu
 DEBUG = True
 
 # include wildcard for tenant subdomains like acme.django-01.local
-ALLOWED_HOSTS = ["localhost","127.0.0.1","django-01.local",".django-01.local"]
+ALLOWED_HOSTS = ["localhost","127.0.0.1","django-01.local","acme.django-01.local"]
 
 # -------------------------------------------------------------------
 # django-tenants
@@ -177,6 +177,7 @@ TENANT_APPS = ["django.contrib.contenttypes","rest_framework","api","payments",]
 INSTALLED_APPS = list(OrderedDict.fromkeys(SHARED_APPS + TENANT_APPS))
 DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
 
+TENANT_URLCONF = "app.urls_tenant"           # <-- the file that has admin/
 PUBLIC_SCHEMA_URLCONF = "app.urls_public"
 ROOT_URLCONF = "app.urls_tenant"
 
@@ -220,7 +221,15 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 CSRF_TRUSTED_ORIGINS = [
-    "https://django-01.local",
+    "https://acme.django-01.local",
     "https://*.django-01.local",
+    "https://statuswatch.local",
+    "https://*.statuswatch.local",
 ]
 
+# --- behind reverse proxy / HTTPS in dev ---
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# keep redirects off in dev; your proxy handles HTTPS on :443
+SECURE_SSL_REDIRECT = False
