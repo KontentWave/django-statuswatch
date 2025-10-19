@@ -246,6 +246,7 @@ ROOT_URLCONF = "app.urls_tenant"
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "app.middleware.SecurityHeadersMiddleware",  # P1-03: Additional security headers
     "django_tenants.middleware.main.TenantMainMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -367,6 +368,63 @@ SESSION_COOKIE_HTTPONLY = True  # Prevent JavaScript access to session cookie
 CSRF_COOKIE_HTTPONLY = True     # Prevent JavaScript access to CSRF cookie
 SESSION_COOKIE_SAMESITE = 'Lax'  # CSRF protection: Lax allows navigation, Strict blocks all cross-site
 CSRF_COOKIE_SAMESITE = 'Lax'
+
+# -------------------------------------------------------------------
+# Security Headers (P1-03)
+# -------------------------------------------------------------------
+# X-Frame-Options: Prevent clickjacking attacks
+# DENY = cannot be displayed in frame/iframe at all
+# SAMEORIGIN = can only be displayed in frame on same origin
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'  # Most secure: prevents all framing
+
+# X-Content-Type-Options: Prevent MIME type sniffing
+# Browsers must respect the declared Content-Type
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Referrer-Policy: Control referrer information sent to other sites
+# 'same-origin' = only send referrer for same-origin requests
+# 'strict-origin-when-cross-origin' = send origin only for cross-origin HTTPS
+SECURE_REFERRER_POLICY = 'same-origin'
+
+# Permissions-Policy (formerly Feature-Policy)
+# Control which browser features can be used
+# Disable potentially risky features like geolocation, camera, microphone
+PERMISSIONS_POLICY = {
+    'geolocation': [],        # No sites can access geolocation
+    'camera': [],             # No sites can access camera
+    'microphone': [],         # No sites can access microphone
+    'payment': [],            # No sites can use Payment Request API (we use Stripe redirect)
+    'usb': [],                # No USB device access
+    'magnetometer': [],       # No magnetometer access
+    'accelerometer': [],      # No accelerometer access
+    'gyroscope': [],          # No gyroscope access
+}
+
+# Content Security Policy (CSP) - Prevent XSS attacks
+# NOTE: django-csp package would be ideal for production, but for now we'll use basic CSP
+# For production, install: pip install django-csp
+# Then configure CSP_* settings in detail
+if ENFORCE_HTTPS:
+    # Strict CSP for production
+    CSP_DEFAULT_SRC = ("'self'",)
+    CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'")  # TODO: Remove unsafe-inline when frontend uses nonces
+    CSP_STYLE_SRC = ("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")
+    CSP_FONT_SRC = ("'self'", "https://fonts.gstatic.com")
+    CSP_IMG_SRC = ("'self'", "data:", "https:")
+    CSP_CONNECT_SRC = ("'self'", "https://api.stripe.com")  # Allow Stripe API calls
+    CSP_FRAME_ANCESTORS = ("'none'",)  # Same as X-Frame-Options: DENY
+    CSP_BASE_URI = ("'self'",)
+    CSP_FORM_ACTION = ("'self'",)
+else:
+    # Relaxed CSP for development
+    CSP_DEFAULT_SRC = ("'self'", "'unsafe-inline'", "'unsafe-eval'")
+    CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'", "'unsafe-eval'")
+    CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")
+    CSP_CONNECT_SRC = ("'self'", "ws:", "wss:")  # Allow WebSocket for dev hot-reload
+    CSP_FRAME_ANCESTORS = ("'none'",)  # Still prevent clickjacking in dev
+    CSP_BASE_URI = ("'self'",)
+    CSP_FORM_ACTION = ("'self'",)
 
 # -------------------------------------------------------------------
 # Logging Configuration

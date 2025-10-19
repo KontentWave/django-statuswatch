@@ -617,7 +617,7 @@ localStorage.setItem("refresh_token", data.refresh); // Don't forget this!
 
 ## Changelog
 
-**2024-10-19 - Initial Implementation**
+**2025-10-19 - Initial Implementation**
 
 - Configured JWT with 15-min access, 7-day refresh tokens
 - Enabled token rotation and blacklisting
