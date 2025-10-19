@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from django.db import IntegrityError, transaction
 from django.utils.text import slugify
 from rest_framework import serializers
@@ -31,6 +32,25 @@ class RegistrationSerializer(serializers.Serializer):
         slug = slugify(value)
         if not slug:
             raise serializers.ValidationError("Organization name must contain letters or numbers.")
+        return value
+
+    def validate_password(self, value: str) -> str:
+        """
+        Validate password against Django's password validators.
+        
+        This includes our custom validators:
+        - Minimum 12 characters
+        - At least one uppercase letter
+        - At least one lowercase letter
+        - At least one number
+        - At least one special character
+        - Not too similar to user attributes
+        - Not a common password
+        """
+        # Run Django's password validation
+        # Note: We don't have a user object yet, so we pass None
+        # UserAttributeSimilarityValidator will be checked again during user creation
+        validate_password(value, user=None)
         return value
 
     def validate(self, attrs: dict) -> dict:

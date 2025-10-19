@@ -8,7 +8,7 @@ export default function Home() {
     try {
       const { data } = await api.post("/auth/token/", {
         username: "jwt",
-        password: "jwtpass123",
+        password: "JwtP@ss123456",
       });
       localStorage.setItem("jwt", data.access);
       toast.success("Logged in (jwt)");
@@ -55,7 +55,7 @@ export default function Home() {
             className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700"
             title="uses /api/auth/token/"
           >
-            Login (jwt/jwtpass123)
+            Login (jwt/JwtP@ss123456)
           </button>
 
           <button

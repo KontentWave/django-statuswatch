@@ -20,7 +20,7 @@ def main():
             username="jwt",
             defaults={"email": "jwt@example.com", "is_active": True},
         )
-        u.set_password("jwtpass123")
+        u.set_password("JwtP@ss123456")  # Meets complexity requirements
         u.save()
         print("OK:", "created" if created else "updated", "user 'jwt' in acme")
 

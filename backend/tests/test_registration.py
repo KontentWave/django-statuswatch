@@ -69,7 +69,7 @@ def test_register_creates_tenant_and_owner_user(client):
             {
                 "organization_name": "Wayne Enterprises",
                 "email": "bruce@wayne.com",
-                "password": "IAmBatman123",
+                "password": "IAmB@tman123456",
                 "password_confirm": "different",
             },
             "password_confirm",

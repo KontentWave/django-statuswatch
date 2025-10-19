@@ -133,10 +133,34 @@ CONN_MAX_AGE = env.int("DB_CONN_MAX_AGE", default=600)
 # Password validation
 # -------------------------------------------------------------------
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    # Django built-in validators
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
+    },
+    # Custom validators for strong password requirements
+    {
+        "NAME": "api.password_validators.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 12},
+    },
+    {
+        "NAME": "api.password_validators.UppercaseValidator",
+    },
+    {
+        "NAME": "api.password_validators.LowercaseValidator",
+    },
+    {
+        "NAME": "api.password_validators.NumberValidator",
+    },
+    {
+        "NAME": "api.password_validators.SpecialCharacterValidator",
+    },
+    {
+        "NAME": "api.password_validators.MaximumLengthValidator",
+        "OPTIONS": {"max_length": 128},
+    },
 ]
 
 # -------------------------------------------------------------------

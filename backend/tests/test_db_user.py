@@ -7,7 +7,7 @@ def test_user_crud():
     u = User.objects.create_user(
         username="alice",
         email="alice@example.com",
-        password="s3cretpass",
+        password="S3cr3tP@ss123",
     )
     assert User.objects.filter(username="alice").exists()
-    assert u.check_password("s3cretpass")
+    assert u.check_password("S3cr3tP@ss123")

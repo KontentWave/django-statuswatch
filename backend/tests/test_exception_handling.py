@@ -173,7 +173,7 @@ class PaymentErrorSanitizationTests(TestCase):
         self.user = User.objects.create_user(
             username='testuser@example.com',
             email='testuser@example.com',
-            password='testpass123'
+            password='TestP@ss123456'
         )
     
     @override_settings(DEBUG=False, STRIPE_SECRET_KEY='sk_test_fake')

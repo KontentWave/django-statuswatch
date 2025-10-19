@@ -58,8 +58,8 @@ def test_registration_rate_limit_blocks_excessive_requests(api_client, settings)
     payload = lambda i: {
         "organization_name": f"Test Org {i}",
         "email": f"test{i}@example.com",
-        "password": "testpass123",
-        "password_confirm": "testpass123",
+        "password": "TestP@ss123456",
+        "password_confirm": "TestP@ss123456",
     }
     
     # First 3 requests should succeed
@@ -94,8 +94,8 @@ def test_registration_rate_limit_returns_proper_error_message(api_client, settin
     payload = {
         "organization_name": "Test Org",
         "email": "test@example.com",
-        "password": "testpass123",
-        "password_confirm": "testpass123",
+        "password": "TestP@ss123456",
+        "password_confirm": "TestP@ss123456",
     }
     
     # First request succeeds or fails validation
@@ -126,8 +126,8 @@ def test_burst_rate_limit_protects_against_rapid_requests(api_client, settings):
     payload = lambda i: {
         "organization_name": f"Burst Test {i}",
         "email": f"burst{i}@example.com",
-        "password": "testpass123",
-        "password_confirm": "testpass123",
+        "password": "TestP@ss123456",
+        "password_confirm": "TestP@ss123456",
     }
     
     # Fire requests rapidly
@@ -155,8 +155,8 @@ def test_different_ips_have_independent_rate_limits(settings):
     payload = lambda i: {
         "organization_name": f"IP Test {i}",
         "email": f"iptest{i}@example.com",
-        "password": "testpass123",
-        "password_confirm": "testpass123",
+        "password": "TestP@ss123456",
+        "password_confirm": "TestP@ss123456",
     }
     
     # Client 1 (IP: 192.168.1.1)

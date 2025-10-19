@@ -31,6 +31,145 @@ describe("RegisterPage", () => {
     navigateMock.mockReset();
   });
 
+  it("shows error for empty fields", async () => {
+    render(<RegisterPage />);
+    const user = userEvent.setup();
+
+    const submitButton = screen.getByRole("button", { name: /sign up/i });
+    await user.click(submitButton);
+
+    // Wait for validation errors to appear
+    expect(
+      await screen.findByText(
+        /organization name is required/i,
+        {},
+        { timeout: 3000 }
+      )
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/email is required/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/password must be at least 12 characters/i)
+    ).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("shows error for weak password (too short)", async () => {
+    render(<RegisterPage />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/organization name/i), "Test Org");
+    await user.type(screen.getByLabelText(/email/i), "test@example.com");
+    await user.type(screen.getByLabelText(/^password$/i), "Short1!");
+    await user.type(screen.getByLabelText(/confirm password/i), "Short1!");
+
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(
+      await screen.findByText(
+        /password must be at least 12 characters/i,
+        {},
+        { timeout: 3000 }
+      )
+    ).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("shows error for password without uppercase", async () => {
+    render(<RegisterPage />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/organization name/i), "Test Org");
+    await user.type(screen.getByLabelText(/email/i), "test@example.com");
+    await user.type(screen.getByLabelText(/^password$/i), "lowercase123!");
+    await user.type(
+      screen.getByLabelText(/confirm password/i),
+      "lowercase123!"
+    );
+
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(
+      await screen.findByText(
+        /password must contain at least one uppercase/i,
+        {},
+        { timeout: 3000 }
+      )
+    ).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("shows error for password without lowercase", async () => {
+    render(<RegisterPage />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/organization name/i), "Test Org");
+    await user.type(screen.getByLabelText(/email/i), "test@example.com");
+    await user.type(screen.getByLabelText(/^password$/i), "UPPERCASE123!");
+    await user.type(
+      screen.getByLabelText(/confirm password/i),
+      "UPPERCASE123!"
+    );
+
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(
+      await screen.findByText(
+        /password must contain at least one lowercase/i,
+        {},
+        { timeout: 3000 }
+      )
+    ).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("shows error for password without number", async () => {
+    render(<RegisterPage />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/organization name/i), "Test Org");
+    await user.type(screen.getByLabelText(/email/i), "test@example.com");
+    await user.type(screen.getByLabelText(/^password$/i), "NoNumbersHere!");
+    await user.type(
+      screen.getByLabelText(/confirm password/i),
+      "NoNumbersHere!"
+    );
+
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(
+      await screen.findByText(
+        /password must contain at least one number/i,
+        {},
+        { timeout: 3000 }
+      )
+    ).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("shows error for password without special character", async () => {
+    render(<RegisterPage />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText(/organization name/i), "Test Org");
+    await user.type(screen.getByLabelText(/email/i), "test@example.com");
+    await user.type(screen.getByLabelText(/^password$/i), "NoSpecialChar123");
+    await user.type(
+      screen.getByLabelText(/confirm password/i),
+      "NoSpecialChar123"
+    );
+
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(
+      await screen.findByText(
+        /password must contain at least one special character/i,
+        {},
+        { timeout: 3000 }
+      )
+    ).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
   it("shows an error when passwords do not match", async () => {
     postMock.mockResolvedValue({ data: { detail: "will not be used" } });
 
@@ -49,7 +188,7 @@ describe("RegisterPage", () => {
     await user.click(screen.getByRole("button", { name: /sign up/i }));
 
     expect(
-      await screen.findByText(/passwords must match/i)
+      await screen.findByText(/passwords must match/i, {}, { timeout: 3000 })
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });

@@ -33,7 +33,7 @@ class UserProfileModelTests(TestCase):
         self.user = User.objects.create_user(
             username='test@example.com',
             email='test@example.com',
-            password='testpass123'
+            password='TestP@ss123456'
         )
     
     def test_user_profile_creation(self):
@@ -105,8 +105,8 @@ class RegistrationWithEmailVerificationTests(APITestCase):
         response = self.client.post('/api/auth/register/', {
             'organization_name': 'Test Org',
             'email': 'newuser@example.com',
-            'password': 'testpass123',
-            'password_confirm': 'testpass123'
+            'password': 'TestP@ss123456',
+            'password_confirm': 'TestP@ss123456'
         })
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -125,8 +125,8 @@ class RegistrationWithEmailVerificationTests(APITestCase):
         response = self.client.post('/api/auth/register/', {
             'organization_name': 'Test Org 2',
             'email': 'another@example.com',
-            'password': 'testpass123',
-            'password_confirm': 'testpass123'
+            'password': 'TestP@ss123456',
+            'password_confirm': 'TestP@ss123456'
         })
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -157,7 +157,7 @@ class EmailVerificationEndpointTests(APITestCase):
         self.user = User.objects.create_user(
             username='verify@example.com',
             email='verify@example.com',
-            password='testpass123'
+            password='TestP@ss123456'
         )
         self.profile = UserProfile.objects.create(
             user=self.user,
@@ -227,7 +227,7 @@ class ResendVerificationEmailTests(APITestCase):
         self.user = User.objects.create_user(
             username='resend@example.com',
             email='resend@example.com',
-            password='testpass123'
+            password='TestP@ss123456'
         )
         self.profile = UserProfile.objects.create(
             user=self.user,
@@ -279,7 +279,7 @@ class EmailSendingTests(TestCase):
         self.user = User.objects.create_user(
             username='emailtest@example.com',
             email='emailtest@example.com',
-            password='testpass123'
+            password='TestP@ss123456'
         )
     
     def test_verification_email_sent(self):

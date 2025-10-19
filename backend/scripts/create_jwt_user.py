@@ -20,7 +20,7 @@ User = get_user_model()
 
 username = "jwt"
 email = "jwt@test.local"
-password = "jwtpass123"
+password = "JwtP@ss123456"  # Meets complexity: 12+ chars, upper, lower, number, special
 
 user, created = User.objects.get_or_create(
     username=username,
