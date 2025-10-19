@@ -50,6 +50,7 @@ SHARED_APPS = (
     "django.contrib.contenttypes",    # required by tenants
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",  # P1-05: JWT token blacklist
     "tenants",                        # your tenants app (Client/Domain models)
 )
 
@@ -223,6 +224,7 @@ SHARED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",  # P1-05: JWT token blacklist
     "api",
 ]
 TENANT_APPS = [
@@ -282,7 +284,40 @@ REST_FRAMEWORK = {**globals().get("REST_FRAMEWORK", {}),
         "sustained": "100/day",       # Long-term protection
     },
 }
-SIMPLE_JWT = {"ACCESS_TOKEN_LIFETIME": timedelta(minutes=60)}
+# -------------------------------------------------------------------
+# JWT Configuration (P1-05: Token Rotation)
+# -------------------------------------------------------------------
+SIMPLE_JWT = {
+    # Token Lifetimes
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),  # Short-lived access tokens
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),     # Longer-lived refresh tokens
+    
+    # Token Rotation
+    "ROTATE_REFRESH_TOKENS": True,   # Issue new refresh token on refresh
+    "BLACKLIST_AFTER_ROTATION": True, # Blacklist old refresh token
+    
+    # Security
+    "UPDATE_LAST_LOGIN": True,       # Update user's last_login on token generation
+    
+    # Token Claims
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+    
+    # Algorithms
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "VERIFYING_KEY": None,
+    
+    # Token Classes
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+    "TOKEN_TYPE_CLAIM": "token_type",
+    
+    # Sliding Tokens (disabled, we use access/refresh pair)
+    "SLIDING_TOKEN_REFRESH_EXP_CLAIM": "refresh_exp",
+    "SLIDING_TOKEN_LIFETIME": timedelta(minutes=5),
+    "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=1),
+}
 
 # CORS
 CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL_ORIGINS", default=False)

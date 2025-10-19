@@ -147,3 +147,47 @@ def resend_verification_email(request):
         status=status.HTTP_200_OK
     )
 
+
+class LogoutView(APIView):
+    """
+    Logout endpoint with JWT token blacklisting (P1-05).
+    
+    Blacklists the refresh token to prevent it from being used again.
+    The access token will expire naturally (15 minutes).
+    
+    Requires authentication via access token.
+    
+    Request body:
+        refresh: The refresh token to blacklist
+    
+    Returns:
+        205: Logout successful, token blacklisted
+        400: Invalid or missing refresh token
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            refresh_token = request.data.get("refresh")
+            if not refresh_token:
+                return Response(
+                    {"error": "Refresh token is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Import here to avoid issues if blacklist not installed
+            from rest_framework_simplejwt.tokens import RefreshToken
+            
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            
+            return Response(
+                {"detail": "Logout successful."},
+                status=status.HTTP_205_RESET_CONTENT
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Invalid token: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
