@@ -7,6 +7,7 @@ Ensures that rate limits protect against spam and abuse.
 import json
 import pytest
 from django.urls import reverse
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from tenants.models import Client, Domain
@@ -28,6 +29,14 @@ def ensure_public_domain(db):
         domain="testserver",
         defaults={"is_primary": True},
     )
+
+
+@pytest.fixture(autouse=True)
+def clear_throttle_cache():
+    """Clear throttle cache before and after each test to prevent interference."""
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture

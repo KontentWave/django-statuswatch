@@ -4,6 +4,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 from django_tenants.utils import schema_context
+from django.core.cache import cache
 
 from tenants.models import Client, Domain
 
@@ -23,6 +24,14 @@ def ensure_public_domain(db):
         domain="testserver",
         defaults={"is_primary": True},
     )
+
+
+@pytest.fixture(autouse=True)
+def clear_throttle_cache():
+    """Clear throttle cache before and after each test to prevent rate limit interference."""
+    cache.clear()
+    yield
+    cache.clear()
 
 
 def _post_json(client, url, payload):
