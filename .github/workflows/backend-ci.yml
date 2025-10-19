@@ -34,6 +34,8 @@ jobs:
           --health-retries=5
 
     env:
+      SECRET_KEY: django-insecure-ci-testing-key-not-for-production
+      DEBUG: "1"
       DATABASE_URL: postgresql://postgres:devpass@localhost:5432/dj01
       REDIS_URL: redis://localhost:6379/0
       STRIPE_PUBLIC_KEY: pk_test_dummy

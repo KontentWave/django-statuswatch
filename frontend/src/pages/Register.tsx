@@ -53,9 +53,16 @@ export default function RegisterPage() {
     },
   });
 
+  // Debug: Log validation errors
+  console.log("🔍 Form errors:", errors);
+  console.log("🔍 Is submitting:", isSubmitting);
+
   const onSubmit = async (values: RegisterFormValues) => {
+    console.log("📝 Form submitted with values:", values);
     setFormError(null);
+
     if (values.password !== values.password_confirm) {
+      console.log("❌ Password mismatch");
       setError("password_confirm", {
         type: "validate",
         message: "Passwords must match.",
@@ -63,8 +70,10 @@ export default function RegisterPage() {
       return;
     }
 
+    console.log("🚀 Sending registration request...");
     try {
       const { data } = await api.post("/auth/register/", values);
+      console.log("✅ Registration successful:", data);
       const detail = data?.detail ?? "Registration successful. Please log in.";
       await navigate({
         to: "/login",
@@ -72,6 +81,7 @@ export default function RegisterPage() {
         replace: true,
       });
     } catch (err) {
+      console.error("❌ Registration failed:", err);
       const error = err as AxiosError<RegisterApiError>;
       const responseData = error.response?.data;
       let hasFieldErrors = false;
@@ -90,7 +100,7 @@ export default function RegisterPage() {
       if (responseData?.detail) {
         setFormError(responseData.detail);
       } else if (!hasFieldErrors) {
-        setFormError("Registration failed.");
+        setFormError("Registration failed. Please try again.");
       }
     }
   };
@@ -103,7 +113,14 @@ export default function RegisterPage() {
           Sign up to provision a new StatusWatch workspace.
         </p>
       </header>
-      <form className="space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          console.log("📋 Form submit event triggered");
+          handleSubmit(onSubmit)(e);
+        }}
+        noValidate
+      >
         <div className="space-y-1">
           <label
             className="block text-sm font-medium"

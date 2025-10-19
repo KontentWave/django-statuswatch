@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verify Your Email</title>
+  </head>
+  <body
+    style="
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    "
+  >
+    <div
+      style="
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        padding: 30px;
+        margin-bottom: 20px;
+      "
+    >
+      <h1 style="color: #2563eb; margin-top: 0">Welcome to StatusWatch!</h1>
+
+      <p>Hello{{ user.get_full_name|default:", " }}{{ user.email }},</p>
+
+      <p>
+        Thank you for registering with StatusWatch. To complete your
+        registration and start using your account, please verify your email
+        address by clicking the button below:
+      </p>
+
+      <div style="text-align: center; margin: 30px 0">
+        <a
+          href="{{ verification_url }}"
+          style="
+            display: inline-block;
+            background-color: #2563eb;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+          "
+        >
+          Verify Email Address
+        </a>
+      </div>
+
+      <p style="font-size: 14px; color: #666">
+        Or copy and paste this link into your browser:<br />
+        <a
+          href="{{ verification_url }}"
+          style="color: #2563eb; word-break: break-all"
+          >{{ verification_url }}</a
+        >
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0" />
+
+      <p style="font-size: 12px; color: #888">
+        <strong>Important:</strong> This verification link will expire in 48
+        hours. If you didn't create an account with StatusWatch, please ignore
+        this email.
+      </p>
+    </div>
+
+    <footer style="text-align: center; font-size: 12px; color: #888">
+      <p>
+        StatusWatch - Website Monitoring Made Simple<br />
+        <a href="{{ frontend_url }}" style="color: #2563eb"
+          >Visit our website</a
+        >
+      </p>
+    </footer>
+  </body>
+</html>

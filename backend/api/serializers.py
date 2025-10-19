@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import logging
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from django.utils.text import slugify
 from rest_framework import serializers
 
 from tenants.models import Client, Domain
+from api.exceptions import (
+    TenantCreationError,
+    DuplicateEmailError,
+    SchemaConflictError,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class RegistrationSerializer(serializers.Serializer):
@@ -14,7 +23,9 @@ class RegistrationSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
 
-    default_detail_message = "Registration successful. Please log in."
+    default_detail_message = (
+        "Registration successful! Please check your email to verify your account before logging in."
+    )
 
     def validate_organization_name(self, value: str) -> str:
         slug = slugify(value)
@@ -32,15 +43,43 @@ class RegistrationSerializer(serializers.Serializer):
         email: str = validated_data["email"].lower()
         password: str = validated_data["password"]
 
-        schema_name = self._build_schema_name(organization_name)
+        try:
+            with transaction.atomic():
+                schema_name = self._build_schema_name(organization_name)
+                
+                tenant = Client(schema_name=schema_name, name=organization_name)
+                tenant.save()  # auto-creates the schema via django-tenants
 
-        tenant = Client(schema_name=schema_name, name=organization_name)
-        tenant.save()  # auto-creates the schema via django-tenants
+                self._create_domain(tenant, schema_name)
+                self._create_owner_user(schema_name, email, password)
 
-        self._create_domain(tenant, schema_name)
-        self._create_owner_user(schema_name, email, password)
-
-        return {"detail": self.default_detail_message}
+                logger.info(
+                    f"Successfully created tenant '{schema_name}' with owner {email}",
+                    extra={'schema_name': schema_name, 'email': email}
+                )
+                
+                return {"detail": self.default_detail_message}
+        
+        except IntegrityError as e:
+            # Database constraint violation (e.g., duplicate email in tenant)
+            logger.warning(
+                f"IntegrityError during registration for {email}: {str(e)}",
+                extra={'email': email, 'organization_name': organization_name}
+            )
+            if 'email' in str(e).lower() or 'username' in str(e).lower():
+                raise DuplicateEmailError(
+                    "This email address is already registered."
+                )
+            raise TenantCreationError()
+        
+        except Exception as e:
+            # Any other error during tenant creation
+            logger.error(
+                f"Unexpected error during registration for {email}: {str(e)}",
+                exc_info=True,
+                extra={'email': email, 'organization_name': organization_name}
+            )
+            raise TenantCreationError()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -60,23 +99,59 @@ class RegistrationSerializer(serializers.Serializer):
     def _create_domain(self, tenant: Client, schema_name: str) -> None:
         domain_suffix = getattr(settings, "DEFAULT_TENANT_DOMAIN_SUFFIX", "localhost")
         domain = f"{schema_name}.{domain_suffix}".strip(".")
-        Domain.objects.get_or_create(
-            tenant=tenant,
-            domain=domain,
-            defaults={"is_primary": True},
-        )
+        try:
+            Domain.objects.get_or_create(
+                tenant=tenant,
+                domain=domain,
+                defaults={"is_primary": True},
+            )
+        except IntegrityError as e:
+            logger.error(
+                f"Failed to create domain {domain} for tenant {schema_name}: {str(e)}",
+                exc_info=True
+            )
+            raise SchemaConflictError(
+                "Failed to configure organization domain. Please try a different name."
+            )
 
     def _create_owner_user(self, schema_name: str, email: str, password: str) -> None:
         from django.contrib.auth.models import Group
         from django_tenants.utils import schema_context
+        from django.utils import timezone
 
         UserModel = get_user_model()
 
-        with schema_context(schema_name):
-            user = UserModel.objects.create_user(
-                username=email,
-                email=email,
-                password=password,
+        try:
+            with schema_context(schema_name):
+                user = UserModel.objects.create_user(
+                    username=email,
+                    email=email,
+                    password=password,
+                )
+                owner_group, _ = Group.objects.get_or_create(name="Owner")
+                user.groups.add(owner_group)
+                
+                # Create user profile with email verification token
+                from .models import UserProfile
+                profile = UserProfile.objects.create(
+                    user=user,
+                    email_verified=False,
+                    email_verification_sent_at=timezone.now()
+                )
+                
+                # Send verification email
+                from .utils import send_verification_email
+                send_verification_email(user, profile.email_verification_token)
+                
+                logger.info(
+                    f"Created user profile and sent verification email to {email}",
+                    extra={'email': email, 'schema_name': schema_name}
+                )
+                
+        except IntegrityError as e:
+            logger.error(
+                f"Failed to create owner user {email} in schema {schema_name}: {str(e)}",
+                exc_info=True
             )
-            owner_group, _ = Group.objects.get_or_create(name="Owner")
-            user.groups.add(owner_group)
+            # This will be caught by the outer exception handler
+            raise

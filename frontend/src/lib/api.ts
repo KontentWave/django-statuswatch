@@ -2,10 +2,24 @@
 import axios from "axios";
 import { API_BASE, apiUrl } from "./env";
 
-export const api = axios.create({ baseURL: API_BASE });
+export const api = axios.create({
+  baseURL: API_BASE,
+  timeout: 30000, // 30 second timeout
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
 
-// Attach JWT from localStorage if present
+// Debug logging
 api.interceptors.request.use((cfg) => {
+  console.log("🚀 API Request:", {
+    method: cfg.method?.toUpperCase(),
+    url: cfg.url,
+    baseURL: cfg.baseURL,
+    fullURL: `${cfg.baseURL}${cfg.url}`,
+    data: cfg.data,
+  });
+
   const token = localStorage.getItem("jwt");
   if (token) {
     cfg.headers = cfg.headers ?? {};
@@ -13,6 +27,28 @@ api.interceptors.request.use((cfg) => {
   }
   return cfg;
 });
+
+// Debug response/error logging
+api.interceptors.response.use(
+  (response) => {
+    console.log("✅ API Response:", {
+      status: response.status,
+      url: response.config.url,
+      data: response.data,
+    });
+    return response;
+  },
+  (error) => {
+    console.error("❌ API Error:", {
+      message: error.message,
+      code: error.code,
+      url: error.config?.url,
+      status: error.response?.status,
+      data: error.response?.data,
+    });
+    return Promise.reject(error);
+  }
+);
 
 export async function login(username: string, password: string) {
   const r = await fetch(apiUrl("/auth/token/"), {

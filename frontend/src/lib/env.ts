@@ -4,13 +4,28 @@
 // 1) VITE_API_BASE (full base incl. scheme/host, no trailing /), e.g. https://acme.statuswatch.local
 // 2) VITE_BACKEND_ORIGIN (scheme/host only), we'll append /api
 // 3) Fallback to window.location.origin in browser, or http://localhost:8011 for SSR/tools.
-const EXPLICIT = (import.meta.env?.VITE_API_BASE as string | undefined)?.replace(/\/$/, "");
+const EXPLICIT = (
+  import.meta.env?.VITE_API_BASE as string | undefined
+)?.replace(/\/$/, "");
 const ORIGIN =
   EXPLICIT ??
   (import.meta.env?.VITE_BACKEND_ORIGIN as string | undefined) ??
-  (typeof window !== "undefined" ? window.location.origin : "http://localhost:8011");
+  (typeof window !== "undefined"
+    ? window.location.origin
+    : "http://localhost:8011");
 
 export const API_BASE = `${ORIGIN}/api`;
+
+// Debug logging
+if (typeof window !== "undefined") {
+  console.log("🔧 API Configuration:", {
+    VITE_API_BASE: import.meta.env?.VITE_API_BASE,
+    VITE_BACKEND_ORIGIN: import.meta.env?.VITE_BACKEND_ORIGIN,
+    "window.location.origin": window.location.origin,
+    COMPUTED_ORIGIN: ORIGIN,
+    FINAL_API_BASE: API_BASE,
+  });
+}
 
 export const apiUrl = (path: string) =>
   `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;

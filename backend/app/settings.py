@@ -12,13 +12,29 @@ import environ
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env()
-environ.Env.read_env(BASE_DIR / ".env")
+# Look for .env in backend/ first, then project root
+env_file = BASE_DIR / ".env"
+if not env_file.exists():
+    env_file = BASE_DIR.parent / ".env"
+environ.Env.read_env(env_file)
 
 # -------------------------------------------------------------------
 # Core
 # -------------------------------------------------------------------
-SECRET_KEY = 'django-insecure-4##dqsxc46_pzcfq4nxp%_f)jhaa%0*^tnp#h-(3bok6)%28iu'  # move to ENV in real deployments
-DEBUG = True
+DEBUG = env.bool("DEBUG", default=False)
+
+SECRET_KEY = env("SECRET_KEY", default=None)
+if not SECRET_KEY:
+    raise ValueError(
+        "SECRET_KEY is not set. Please set it in your .env file or environment variables.\n"
+        "Generate a secure key with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
+    )
+if SECRET_KEY.startswith("django-insecure"):
+    if not DEBUG:
+        raise ValueError(
+            "Cannot use 'django-insecure' SECRET_KEY in production (DEBUG=False).\n"
+            "Generate a secure key with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
+        )
 
 # include wildcard for tenant subdomains like acme.django-01.local
 ALLOWED_HOSTS = ["localhost","127.0.0.1","django-01.local","acme.django-01.local"]
@@ -232,21 +248,33 @@ REST_FRAMEWORK = {**globals().get("REST_FRAMEWORK", {}),
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ),
+    "EXCEPTION_HANDLER": "api.exception_handler.custom_exception_handler",
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/hour",           # General anonymous users
+        "user": "1000/hour",          # Authenticated users
+        "registration": "5/hour",     # Registration endpoint (strict)
+        "login": "10/hour",           # Login endpoint (prevent brute-force)
+        "burst": "20/min",            # Burst protection (short-term)
+        "sustained": "100/day",       # Long-term protection
+    },
 }
 SIMPLE_JWT = {"ACCESS_TOKEN_LIFETIME": timedelta(minutes=60)}
 
 # CORS
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-CSRF_TRUSTED_ORIGINS = [
-    "https://acme.django-01.local",
-    "https://*.django-01.local",
-    "https://statuswatch.local",
-    "https://*.statuswatch.local",
-]
+CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL_ORIGINS", default=False)
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=["http://localhost:5173", "http://127.0.0.1:5173"]
+)
+CSRF_TRUSTED_ORIGINS = env.list(
+    "CSRF_TRUSTED_ORIGINS",
+    default=[
+        "https://acme.django-01.local",
+        "https://*.django-01.local",
+        "https://statuswatch.local",
+        "https://*.statuswatch.local",
+    ]
+)
 
 # --- behind reverse proxy / HTTPS in dev ---
 USE_X_FORWARDED_HOST = True
@@ -254,3 +282,121 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # keep redirects off in dev; your proxy handles HTTPS on :443
 SECURE_SSL_REDIRECT = False
+
+# -------------------------------------------------------------------
+# Logging Configuration
+# -------------------------------------------------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{levelname}] {asctime} {name} {module}.{funcName}:{lineno} - {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '[{levelname}] {message}',
+            'style': '{',
+        },
+    },
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        },
+        'require_debug_true': {
+            '()': 'django.utils.log.RequireDebugTrue',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'console_debug': {
+            'level': 'DEBUG',
+            'filters': ['require_debug_true'],
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file_error': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'error.log',
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+        'file_security': {
+            'level': 'WARNING',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'security.log',
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file_error'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['file_security', 'console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['file_error', 'console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'api': {
+            'handlers': ['console', 'file_error'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'tenants': {
+            'handlers': ['console', 'file_error'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'payments': {
+            'handlers': ['console', 'file_error'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
+# -------------------------------------------------------------------
+# Email Configuration
+# -------------------------------------------------------------------
+# For MVP/development: console backend logs emails to terminal
+# For production: switch to SMTP backend (SendGrid, Mailgun, AWS SES, etc.)
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.console.EmailBackend"
+)
+
+# SMTP settings (used when EMAIL_BACKEND is set to SMTP)
+EMAIL_HOST = env("EMAIL_HOST", default="localhost")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+
+# Email addresses
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL",
+    default="noreply@statuswatch.local"
+)
+SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
+
+# Frontend URL for email links (verification, password reset, etc.)
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")

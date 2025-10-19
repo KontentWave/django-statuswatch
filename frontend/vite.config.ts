@@ -5,9 +5,10 @@ import { fileURLToPath, URL } from "node:url";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const proxyTarget =
-    env.VITE_BACKEND_PROXY ??
+    env.VITE_API_BASE ??
     env.VITE_BACKEND_ORIGIN ??
-    "https://acme.statuswatch.local";
+    env.VITE_BACKEND_PROXY ??
+    "http://localhost:8000";
 
   return {
     plugins: [react()],
