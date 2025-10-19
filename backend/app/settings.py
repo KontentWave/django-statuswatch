@@ -300,12 +300,38 @@ CSRF_TRUSTED_ORIGINS = env.list(
     ]
 )
 
-# --- behind reverse proxy / HTTPS in dev ---
+# -------------------------------------------------------------------
+# HTTPS/Security Configuration (P1-02)
+# -------------------------------------------------------------------
+# Trust X-Forwarded-Proto header from reverse proxies (nginx, AWS ALB, etc.)
 USE_X_FORWARDED_HOST = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-# keep redirects off in dev; your proxy handles HTTPS on :443
-SECURE_SSL_REDIRECT = False
+# HTTPS Redirect - enabled in production only
+# In development, the reverse proxy handles HTTPS termination
+ENFORCE_HTTPS = env.bool("ENFORCE_HTTPS", default=not DEBUG)
+SECURE_SSL_REDIRECT = ENFORCE_HTTPS
+
+# HTTP Strict Transport Security (HSTS)
+# Tells browsers to only access the site via HTTPS
+if ENFORCE_HTTPS:
+    SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=3600)  # 1 hour for testing, increase gradually
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", default=True)  # Apply to all subdomains (important for multi-tenant)
+    SECURE_HSTS_PRELOAD = env.bool("SECURE_HSTS_PRELOAD", default=False)  # Set True only when using long HSTS duration
+else:
+    SECURE_HSTS_SECONDS = 0
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False
+
+# Cookie Security - only send cookies over HTTPS in production
+SESSION_COOKIE_SECURE = ENFORCE_HTTPS
+CSRF_COOKIE_SECURE = ENFORCE_HTTPS
+
+# Additional cookie security settings
+SESSION_COOKIE_HTTPONLY = True  # Prevent JavaScript access to session cookie
+CSRF_COOKIE_HTTPONLY = True     # Prevent JavaScript access to CSRF cookie
+SESSION_COOKIE_SAMESITE = 'Lax'  # CSRF protection: Lax allows navigation, Strict blocks all cross-site
+CSRF_COOKIE_SAMESITE = 'Lax'
 
 # -------------------------------------------------------------------
 # Logging Configuration
