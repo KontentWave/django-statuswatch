@@ -3,13 +3,18 @@ Django settings for app project (Django 5 + DRF + Celery + django-tenants).
 """
 
 from pathlib import Path
-import os
+from collections import OrderedDict
+from datetime import timedelta
+
 import environ
 
 # -------------------------------------------------------------------
 # Base & env
 # -------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 
 env = environ.Env()
 # Look for .env in backend/ first, then project root
@@ -37,7 +42,7 @@ if SECRET_KEY.startswith("django-insecure"):
         )
 
 # include wildcard for tenant subdomains like acme.django-01.local
-ALLOWED_HOSTS = ["localhost","127.0.0.1","django-01.local","acme.django-01.local"]
+ALLOWED_HOSTS = ["localhost","127.0.0.1",".localhost","django-01.local","acme.django-01.local"]
 
 # -------------------------------------------------------------------
 # django-tenants
@@ -50,7 +55,7 @@ SHARED_APPS = (
     "django.contrib.contenttypes",    # required by tenants
     "django.contrib.staticfiles",
     "rest_framework",
-    "rest_framework_simplejwt.token_blacklist",  # P1-05: JWT token blacklist
+    "corsheaders",                    # CORS support
     "tenants",                        # your tenants app (Client/Domain models)
 )
 
@@ -59,6 +64,7 @@ TENANT_APPS = (
     "django.contrib.auth",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "rest_framework_simplejwt.token_blacklist",  # Per-tenant JWT blacklist tables
     # your tenant-facing apps:
     "api",
 )
@@ -72,21 +78,8 @@ DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
 PUBLIC_SCHEMA_URLCONF = "app.urls_public"
 ROOT_URLCONF = "app.urls_tenant"
 
-# -------------------------------------------------------------------
-# Middleware
-# -------------------------------------------------------------------
-MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
-    "django_tenants.middleware.main.TenantMainMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
-]
+# NOTE: MIDDLEWARE is defined later in this file (after tenant configuration)
+# See line ~240 for the actual MIDDLEWARE configuration
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
@@ -208,32 +201,27 @@ STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
 
 
 # === TENANTS / JWT / CORS (canonical tail) ===
-from collections import OrderedDict
-from datetime import timedelta
 
-TENANT_MODEL = "tenants.Client"; DOMAIN_MODEL = "tenants.Domain"; TENANT_DOMAIN_MODEL = "tenants.Domain"; PUBLIC_SCHEMA_NAME = "public"
+TENANT_MODEL = "tenants.Client"
+DOMAIN_MODEL = "tenants.Domain"
+TENANT_DOMAIN_MODEL = "tenants.Domain"
+PUBLIC_SCHEMA_NAME = "public"
 
 SHARED_APPS = [
     "django_tenants",
     "tenants",
     "django.contrib.contenttypes",
-    "django.contrib.auth",
-    "django.contrib.sessions",
-    "django.contrib.messages",
-    "django.contrib.admin",
     "django.contrib.staticfiles",
     "corsheaders",
-    "rest_framework",
-    "rest_framework_simplejwt.token_blacklist",  # P1-05: JWT token blacklist
-    "api",
 ]
 TENANT_APPS = [
+    "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.admin",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",  # Per-tenant JWT blacklist tables
     "api",
     "payments",
 ]
@@ -247,6 +235,7 @@ ROOT_URLCONF = "app.urls_tenant"
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "app.middleware.SecurityHeadersMiddleware",  # P1-03: Additional security headers
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django_tenants.middleware.main.TenantMainMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -258,9 +247,13 @@ MIDDLEWARE = [
 ]
 
 ALLOWED_HOSTS = [
-    "localhost","127.0.0.1",
-    "django-01.local",".django-01.local",
-    "statuswatch.local",".statuswatch.local"
+    "localhost",
+    "127.0.0.1",
+    ".localhost",
+    "django-01.local",
+    ".django-01.local",
+    "statuswatch.local",
+    ".statuswatch.local",
 ]
 
 
@@ -324,8 +317,25 @@ SIMPLE_JWT = {
 CORS_ALLOW_ALL_ORIGINS = env.bool("CORS_ALLOW_ALL_ORIGINS", default=False)
 CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
-    default=["http://localhost:5173", "http://127.0.0.1:5173"]
+    default=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://localhost:5173",   # Vite with HTTPS
+        "https://localhost:8443",   # OpenResty/Nginx proxy
+    ]
 )
+CORS_ALLOW_CREDENTIALS = True  # Allow cookies/auth headers
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
 CSRF_TRUSTED_ORIGINS = env.list(
     "CSRF_TRUSTED_ORIGINS",
     default=[
@@ -462,10 +472,18 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
         },
+        'file_app': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOG_DIR / 'statuswatch.log',
+            'maxBytes': 1024 * 1024 * 10,
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
         'file_error': {
             'level': 'ERROR',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'error.log',
+            'filename': LOG_DIR / 'error.log',
             'maxBytes': 1024 * 1024 * 10,  # 10 MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -473,7 +491,7 @@ LOGGING = {
         'file_security': {
             'level': 'WARNING',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': BASE_DIR / 'logs' / 'security.log',
+            'filename': LOG_DIR / 'security.log',
             'maxBytes': 1024 * 1024 * 10,  # 10 MB
             'backupCount': 5,
             'formatter': 'verbose',
@@ -481,7 +499,7 @@ LOGGING = {
     },
     'loggers': {
         'django': {
-            'handlers': ['console', 'file_error'],
+            'handlers': ['console', 'file_app', 'file_error'],
             'level': 'INFO',
             'propagate': False,
         },
@@ -491,28 +509,33 @@ LOGGING = {
             'propagate': False,
         },
         'django.request': {
-            'handlers': ['file_error', 'console'],
+            'handlers': ['file_app', 'file_error', 'console'],
             'level': 'ERROR',
             'propagate': False,
         },
         'api': {
-            'handlers': ['console', 'file_error'],
+            'handlers': ['console', 'file_app'],
             'level': 'INFO',
             'propagate': False,
         },
         'tenants': {
-            'handlers': ['console', 'file_error'],
+            'handlers': ['console', 'file_app'],
             'level': 'INFO',
             'propagate': False,
         },
         'payments': {
-            'handlers': ['console', 'file_error'],
+            'handlers': ['console', 'file_app'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'api.auth': {
+            'handlers': ['console', 'file_app', 'file_security'],
             'level': 'INFO',
             'propagate': False,
         },
     },
     'root': {
-        'handlers': ['console'],
+        'handlers': ['console', 'file_app'],
         'level': 'INFO',
     },
 }

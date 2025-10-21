@@ -1,12 +1,21 @@
+import logging
+
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.views import TokenViewBase
 
+from .logging_utils import sanitize_log_value
 from .models import UserProfile
-from .serializers import RegistrationSerializer
-from .throttles import RegistrationRateThrottle, BurstRateThrottle
+from .serializers import RegistrationSerializer, UserSerializer
+from .throttles import BurstRateThrottle, LoginRateThrottle, RegistrationRateThrottle
+
+
+auth_logger = logging.getLogger("api.auth")
 
 
 class PingView(APIView):
@@ -22,6 +31,29 @@ class SecurePingView(APIView):
 
     def get(self, request):
         return Response({"ok": True, "user": str(request.user)})
+
+
+class CurrentUserView(APIView):
+    """
+    Return information about the currently authenticated user.
+    
+    Returns user details including groups. Requires valid JWT.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        auth_logger.info(
+            "Fetched current user profile",
+            extra={
+                "user_id": getattr(request.user, "id", None),
+                "email": getattr(request.user, "email", None),
+                "schema_name": getattr(tenant, "schema_name", "public"),
+                "ip_address": TokenObtainPairWithLoggingView._extract_ip(request),
+            },
+        )
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
 
 
 class RegistrationView(APIView):
@@ -45,6 +77,60 @@ class RegistrationView(APIView):
             payload = serializer.save()
             return Response(payload, status=status.HTTP_201_CREATED)
         return Response({"errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TokenObtainPairWithLoggingView(TokenViewBase):
+    """JWT login endpoint with structured logging and throttling."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [LoginRateThrottle, BurstRateThrottle]
+    serializer_class = TokenObtainPairSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        username = request.data.get("username") or request.data.get("email")
+        ip_address = self._extract_ip(request)
+        tenant = getattr(request, "tenant", None)
+        schema_name = getattr(tenant, "schema_name", "public")
+        user_agent = request.META.get("HTTP_USER_AGENT", "")
+
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as exc:
+            reason = exc.args[0] if exc.args else "Invalid credentials"
+            auth_logger.warning(
+                "Login failed",
+                extra={
+                    "email": username,
+                    "schema_name": schema_name,
+                    "ip_address": ip_address,
+                    "reason": reason,
+                    "user_agent": user_agent,
+                },
+            )
+            raise InvalidToken(reason) from exc
+
+        user = getattr(serializer, "user", None)
+        auth_logger.info(
+            "Login successful",
+            extra={
+                "email": username or getattr(user, "email", None),
+                "user_id": getattr(user, "id", None),
+                "schema_name": schema_name,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+            },
+        )
+
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def _extract_ip(request):
+        forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+        return request.META.get("REMOTE_ADDR", "unknown")
 
 
 @api_view(['GET', 'POST'])
@@ -167,27 +253,75 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        refresh_token = request.data.get("refresh")
+        user = request.user
+        tenant = getattr(request, "tenant", None)
+        schema_name = getattr(tenant, "schema_name", "public")
+        ip_address = TokenObtainPairWithLoggingView._extract_ip(request)
+
+        if not refresh_token:
+            auth_logger.warning(
+                "Logout rejected: refresh token missing",
+                extra={
+                    "user_id": getattr(user, "id", None),
+                    "email": getattr(user, "email", None),
+                    "schema_name": schema_name,
+                    "ip_address": ip_address,
+                },
+            )
+            return Response(
+                {"error": "Refresh token is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from rest_framework_simplejwt.tokens import RefreshToken
+
         try:
-            refresh_token = request.data.get("refresh")
-            if not refresh_token:
-                return Response(
-                    {"error": "Refresh token is required."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Import here to avoid issues if blacklist not installed
-            from rest_framework_simplejwt.tokens import RefreshToken
-            
             token = RefreshToken(refresh_token)
             token.blacklist()
-            
-            return Response(
-                {"detail": "Logout successful."},
-                status=status.HTTP_205_RESET_CONTENT
+        except TokenError as exc:
+            auth_logger.warning(
+                "Logout failed",
+                extra={
+                    "user_id": getattr(user, "id", None),
+                    "email": getattr(user, "email", None),
+                    "schema_name": schema_name,
+                    "ip_address": ip_address,
+                    "reason": sanitize_log_value(str(exc)),
+                },
             )
-        except Exception as e:
             return Response(
-                {"error": f"Invalid token: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": "Invalid or expired refresh token."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            auth_logger.error(
+                "Logout failed",
+                extra={
+                    "user_id": getattr(user, "id", None),
+                    "email": getattr(user, "email", None),
+                    "schema_name": schema_name,
+                    "ip_address": ip_address,
+                    "reason": sanitize_log_value(str(exc)),
+                },
+            )
+            return Response(
+                {"error": "Could not complete logout."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        auth_logger.info(
+            "Logout successful",
+            extra={
+                "user_id": getattr(user, "id", None),
+                "email": getattr(user, "email", None),
+                "schema_name": schema_name,
+                "ip_address": sanitize_log_value(ip_address),
+            },
+        )
+
+        return Response(
+            {"detail": "Logout successful. You have been logged out."},
+            status=status.HTTP_205_RESET_CONTENT,
+        )
 

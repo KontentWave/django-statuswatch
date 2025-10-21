@@ -6,12 +6,15 @@ useful debugging information in logs.
 """
 
 import logging
+
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.http import Http404
 from rest_framework import exceptions
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
+
+from .logging_utils import sanitize_log_value
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +63,14 @@ def handle_generic_exception(exc, context):
     view = context.get('view')
     
     # Log the unhandled exception
+    message = sanitize_log_value(
+        f"Unhandled exception in {view.__class__.__name__ if view else 'unknown'}: {exc}"
+    )
     logger.error(
-        f"Unhandled exception in {view.__class__.__name__ if view else 'unknown'}: {exc}",
-        exc_info=True,
+        message,
+        exc_info=settings.DEBUG,
         extra={
-            'request_path': request.path if request else None,
+            'request_path': sanitize_log_value(request.path if request else None),
             'request_method': request.method if request else None,
             'exception_type': type(exc).__name__,
         }
@@ -171,15 +177,20 @@ def log_exception(exc, context, response):
     request_path = request.path if request else 'Unknown'
     request_method = request.method if request else 'Unknown'
     
+    message = sanitize_log_value(f"{type(exc).__name__} in {view_name}: {exc}")
+    extra = {
+        'exception_type': type(exc).__name__,
+        'request_path': sanitize_log_value(request_path),
+        'request_method': request_method,
+        'status_code': response.status_code if response else None,
+        'user': sanitize_log_value(
+            str(request.user) if request and hasattr(request, 'user') else 'Anonymous'
+        ),
+    }
+
     logger.log(
         log_level,
-        f"{type(exc).__name__} in {view_name}: {exc}",
-        exc_info=(log_level == logging.ERROR),  # Include traceback for errors
-        extra={
-            'exception_type': type(exc).__name__,
-            'request_path': request_path,
-            'request_method': request_method,
-            'status_code': response.status_code if response else None,
-            'user': str(request.user) if request and hasattr(request, 'user') else 'Anonymous',
-        }
+        message,
+        exc_info=settings.DEBUG and log_level == logging.ERROR,
+        extra=extra,
     )

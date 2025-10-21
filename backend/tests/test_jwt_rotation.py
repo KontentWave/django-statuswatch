@@ -21,27 +21,10 @@ from rest_framework_simplejwt.token_blacklist.models import (
 from datetime import timedelta
 from django.conf import settings
 from django_tenants.utils import schema_context
-from tenants.models import Client, Domain
 
 User = get_user_model()
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-@pytest.fixture(autouse=True)
-def ensure_public_domain(db):
-    """Ensure public tenant and testserver domain exist for JWT tests."""
-    tenant = Client.objects.filter(schema_name="public").first()
-    if tenant is None:
-        tenant = Client(schema_name="public", name="Public Tenant")
-        tenant.auto_create_schema = False
-        tenant.save()
-
-    Domain.objects.get_or_create(
-        tenant=tenant,
-        domain="testserver",
-        defaults={"is_primary": True},
-    )
 
 
 @pytest.fixture
@@ -51,8 +34,8 @@ def api_client():
 
 @pytest.fixture
 def test_user(db):
-    """Create a test user with a strong password in the public schema."""
-    with schema_context("public"):
+    """Create a test user with a strong password in the test_tenant schema."""
+    with schema_context("test_tenant"):
         user = User.objects.create_user(
             username="tokentest",
             password="TokenTest@123456",
@@ -315,7 +298,8 @@ class TestTokenBlacklistModels:
 
     def test_outstanding_token_created_on_login(self, api_client, test_user):
         """Outstanding token should be created when user logs in."""
-        initial_count = OutstandingToken.objects.count()
+        with schema_context("test_tenant"):
+            initial_count = OutstandingToken.objects.count()
 
         url_obtain = reverse("token_obtain_pair")
         api_client.post(
@@ -325,7 +309,8 @@ class TestTokenBlacklistModels:
         )
 
         # Should have created an outstanding token
-        assert OutstandingToken.objects.count() > initial_count
+        with schema_context("test_tenant"):
+            assert OutstandingToken.objects.count() > initial_count
 
     def test_blacklisted_token_created_on_logout(self, api_client, test_user):
         """Blacklisted token should be created when user logs out."""
@@ -339,7 +324,8 @@ class TestTokenBlacklistModels:
         access_token = response.data["access"]
         refresh_token = response.data["refresh"]
 
-        initial_blacklist_count = BlacklistedToken.objects.count()
+        with schema_context("test_tenant"):
+            initial_blacklist_count = BlacklistedToken.objects.count()
 
         # Logout
         url_logout = reverse("api-logout")
@@ -347,4 +333,5 @@ class TestTokenBlacklistModels:
         api_client.post(url_logout, {"refresh": refresh_token}, format="json")
 
         # Should have created a blacklisted token
-        assert BlacklistedToken.objects.count() > initial_blacklist_count
+        with schema_context("test_tenant"):
+            assert BlacklistedToken.objects.count() > initial_blacklist_count

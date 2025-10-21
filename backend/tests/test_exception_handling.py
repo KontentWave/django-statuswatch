@@ -13,6 +13,7 @@ from stripe import _error as stripe_error
 from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory
 from django.contrib.auth import get_user_model
+from django_tenants.utils import schema_context
 
 from api.exceptions import (
     TenantCreationError,
@@ -168,13 +169,15 @@ class PaymentErrorSanitizationTests(TestCase):
     """Unit tests for Stripe error sanitization in payment views."""
     
     def setUp(self):
+        """Create test user in test_tenant schema."""
         self.factory = APIRequestFactory()
-        # Create a test user
-        self.user = User.objects.create_user(
-            username='testuser@example.com',
-            email='testuser@example.com',
-            password='TestP@ss123456'
-        )
+        # Create a test user in tenant schema
+        with schema_context('test_tenant'):
+            self.user = User.objects.create_user(
+                username='testuser@example.com',
+                email='testuser@example.com',
+                password='TestP@ss123456'
+            )
     
     @override_settings(DEBUG=False, STRIPE_SECRET_KEY='sk_test_fake')
     @patch('payments.views.stripe.checkout.Session.create')

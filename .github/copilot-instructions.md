@@ -27,7 +27,7 @@ statuswatch-project/
 └─ frontend/
    ├─ package.json
    ├─ tsconfig.json
-   ├─ vite.config.ts
+   ├─ vite.config.ts#
    ├─ postcss.config.cjs
    ├─ tailwind.config.ts
    ├─ .eslintrc.cjs  .prettierrc
@@ -151,11 +151,13 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
 # Copilot Rules: StatusWatch
 
 ## Architecture
+
 - Mono-repo with `backend/` (Django/DRF) and `frontend/` (Vite/React/TS).
 - Multi-tenant backend using `django-tenants` with subdomain routing.
 - JWT auth (Simple JWT). Payments via Stripe Checkout redirect.
 
 ## Frontend
+
 - Use React + TS + Vite.
 - Styling: Tailwind + shadcn/ui (Radix). Accessible components.
 - Routing: TanStack Router. Data fetching: TanStack Query.
@@ -165,6 +167,7 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
 - For Stripe: call `/api/pay/create-checkout-session/` and redirect to returned `url`.
 
 ## Backend
+
 - DRF viewsets or function views; return OpenAPI via drf-spectacular.
 - Settings are env-driven (`django-environ`); no secrets in VCS.
 - Keep `payments`, `api`, `tenants`, `monitors` as separate Django apps.
@@ -174,11 +177,13 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
   - `GET /api/pay/config/`, `POST /api/pay/create-checkout-session/`
 
 ## Code quality
+
 - Python: black, ruff, isort, mypy; tests with pytest/pytest-django.
 - Frontend: ESLint + Prettier; unit tests with Vitest + RTL.
 - Prefer small, typed modules; avoid `any`; extract DTO types.
 
 ## Output
+
 - Generate files under the correct repo subfolders.
 - Use path aliases like `@/lib`, `@/components` in frontend.
 - Include docstrings/JSDoc where useful.
@@ -188,7 +193,7 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
 
 # 5) Environments & examples
 
-* **Backend `backend/.env.example`**
+- **Backend `backend/.env.example`**
 
   ```
   DATABASE_URL=postgresql://postgres:devpass@127.0.0.1:5432/dj01
@@ -199,7 +204,7 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
   STRIPE_WEBHOOK_SECRET=whsec_xxx
   ```
 
-* **Frontend `frontend/.env.example`**
+- **Frontend `frontend/.env.example`**
 
   ```
   VITE_STRIPE_PUBLIC_KEY=pk_test_xxx
@@ -209,10 +214,16 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
 
 # 6) Tooling & CI (optional but nice)
 
-* **pre-commit** at repo root with hooks for black/ruff/isort/mypy & eslint/prettier.
-* **GitHub Actions**:
+- **pre-commit** at repo root with hooks for black/ruff/isort/mypy & eslint/prettier.
+- **GitHub Actions**:
 
-  * Backend: setup Python, install `-r requirements-dev.txt`, run `pytest -q`.
-  * Frontend: Node 20, `pnpm i`/`npm ci`, run `npm run test` & `npm run build`.
+  - Backend: setup Python, install `-r requirements-dev.txt`, run `pytest -q`.
+  - Frontend: Node 20, `pnpm i`/`npm ci`, run `npm run test` & `npm run build`.
 
 ---
+
+When debugging: provide ALL diagnostic commands upfront before suggesting fixes.
+
+Don't execute shell commands. Provide them in code blocks for manual execution.
+
+--

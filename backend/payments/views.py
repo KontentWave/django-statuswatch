@@ -1,4 +1,5 @@
 import logging
+
 import stripe
 from stripe import _error as stripe_error
 from django.conf import settings
@@ -11,6 +12,7 @@ from api.exceptions import (
     InvalidPaymentMethodError,
     ConfigurationError,
 )
+from api.logging_utils import sanitize_log_value
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +64,10 @@ def create_checkout_session(request):
     except stripe_error.CardError as e:
         # Card was declined
         logger.warning(
-            f"Stripe card error for user {request.user.id}: {e.user_message}",
-            extra={'stripe_error_code': e.code}
+            sanitize_log_value(
+                f"Stripe card error for user {request.user.id}: {e.user_message}"
+            ),
+            extra={'stripe_error_code': sanitize_log_value(e.code)},
         )
         raise InvalidPaymentMethodError(
             "Your payment method was declined. Please try a different payment method."
@@ -72,25 +76,30 @@ def create_checkout_session(request):
     except stripe_error.InvalidRequestError as e:
         # Invalid parameters
         logger.error(
-            f"Stripe invalid request for user {request.user.id}: {str(e)}",
-            exc_info=True,
-            extra={'amount': amount, 'currency': currency}
+            sanitize_log_value(
+                f"Stripe invalid request for user {request.user.id}: {str(e)}"
+            ),
+            exc_info=settings.DEBUG,
+            extra={
+                'amount': amount,
+                'currency': currency,
+            }
         )
         raise PaymentProcessingError()
     
     except stripe_error.AuthenticationError as e:
         # Authentication with Stripe failed
         logger.critical(
-            f"Stripe authentication error: {str(e)}",
-            exc_info=True
+            sanitize_log_value(f"Stripe authentication error: {str(e)}"),
+            exc_info=settings.DEBUG,
         )
         raise ConfigurationError("Payment system authentication failed.")
     
     except stripe_error.APIConnectionError as e:
         # Network communication failed
         logger.error(
-            f"Stripe API connection error: {str(e)}",
-            exc_info=True
+            sanitize_log_value(f"Stripe API connection error: {str(e)}"),
+            exc_info=settings.DEBUG,
         )
         raise PaymentProcessingError(
             "Unable to connect to payment processor. Please try again later."
@@ -99,16 +108,20 @@ def create_checkout_session(request):
     except stripe_error.StripeError as e:
         # Generic Stripe error
         logger.error(
-            f"Stripe error for user {request.user.id}: {str(e)}",
-            exc_info=True
+            sanitize_log_value(
+                f"Stripe error for user {request.user.id}: {str(e)}"
+            ),
+            exc_info=settings.DEBUG,
         )
         raise PaymentProcessingError()
     
     except Exception as e:
         # Non-Stripe error
         logger.error(
-            f"Unexpected error in create_checkout_session: {str(e)}",
-            exc_info=True,
+            sanitize_log_value(
+                f"Unexpected error in create_checkout_session: {str(e)}"
+            ),
+            exc_info=settings.DEBUG,
             extra={'user': request.user.id}
         )
         raise PaymentProcessingError()

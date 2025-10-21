@@ -9,12 +9,19 @@ Verifies:
 """
 
 import pytest
-from django.test import TestCase, override_settings
-from django.test.client import Client
+from django.test import TestCase, override_settings, Client
+from django_tenants.test.client import TenantClient
+from tenants.models import Client as TenantModel
 
 
 class HTTPSEnforcementTests(TestCase):
     """Test HTTPS redirect and security headers."""
+
+    def setUp(self):
+        """Set up test tenant for HTTPS tests."""
+        # Use test_tenant created by conftest.py fixture
+        self.tenant = TenantModel.objects.get(schema_name='test_tenant')
+        # Domains already created by conftest.py ensure_test_tenant
 
     @override_settings(
         ENFORCE_HTTPS=True,
@@ -27,7 +34,7 @@ class HTTPSEnforcementTests(TestCase):
     )
     def test_http_redirects_to_https_when_enforced(self):
         """HTTP requests should redirect to HTTPS when ENFORCE_HTTPS=True."""
-        client = Client()
+        client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=False)
         
         # Should redirect to HTTPS
@@ -40,7 +47,7 @@ class HTTPSEnforcementTests(TestCase):
     )
     def test_http_allowed_in_development(self):
         """HTTP requests should work normally when ENFORCE_HTTPS=False."""
-        client = Client()
+        client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=False)
         
         # Should not redirect (200 OK or 404, but not 301)
@@ -54,7 +61,7 @@ class HTTPSEnforcementTests(TestCase):
     )
     def test_hsts_header_present_when_enforced(self):
         """HSTS headers should be present on HTTPS requests when enforced."""
-        client = Client()
+        client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=True)
         
         # Check HSTS header exists
@@ -79,7 +86,7 @@ class HTTPSEnforcementTests(TestCase):
     )
     def test_hsts_header_with_preload(self):
         """HSTS headers should include preload when configured."""
-        client = Client()
+        client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=True)
         
         hsts_value = response.get("Strict-Transport-Security", "")
@@ -94,7 +101,7 @@ class HTTPSEnforcementTests(TestCase):
     )
     def test_no_hsts_header_in_development(self):
         """HSTS headers should NOT be present when ENFORCE_HTTPS=False."""
-        client = Client()
+        client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=False)
         
         # HSTS header should not be present or should be max-age=0
@@ -158,7 +165,7 @@ class HTTPSEnforcementTests(TestCase):
     )
     def test_respects_x_forwarded_proto_header(self):
         """Should respect X-Forwarded-Proto header from reverse proxy."""
-        client = Client()
+        client = TenantClient(self.tenant)
         
         # Simulate reverse proxy setting X-Forwarded-Proto
         response = client.get(
@@ -194,13 +201,19 @@ class CookieSecurityTests(TestCase):
 class HTTPSIntegrationTests(TestCase):
     """Integration tests for HTTPS enforcement."""
 
+    def setUp(self):
+        """Set up test tenant for HTTPS integration tests."""
+        # Use test_tenant created by conftest.py fixture
+        self.tenant = TenantModel.objects.get(schema_name='test_tenant')
+        # Domains already created by conftest.py ensure_test_tenant
+
     @override_settings(
         ENFORCE_HTTPS=True,
         SECURE_SSL_REDIRECT=True,
     )
     def test_api_endpoints_redirect_to_https(self):
         """All API endpoints should redirect HTTP to HTTPS."""
-        client = Client()
+        client = TenantClient(self.tenant)
         
         # Test endpoints that exist in all configurations
         endpoints = [
@@ -211,7 +224,7 @@ class HTTPSIntegrationTests(TestCase):
         for endpoint in endpoints:
             with self.subTest(endpoint=endpoint):
                 response = client.get(
-                    endpoint, secure=False, HTTP_HOST="localhost"
+                    endpoint, secure=False
                 )
                 
                 # Should redirect to HTTPS (301)
@@ -226,12 +239,13 @@ class HTTPSIntegrationTests(TestCase):
     )
     def test_development_mode_works_with_http(self):
         """Development mode should work normally with HTTP."""
-        client = Client()
+        client = TenantClient(self.tenant)
 
-        # Use admin login page which always exists and doesn't require tenant
-        response = client.get("/admin/login/", secure=False, HTTP_HOST="localhost")
+        # Use API endpoint which exists in tenant schemas
+        # TenantClient automatically uses the tenant's primary domain
+        response = client.get("/api/ping/", secure=False)
 
-        # Should work without redirect (200 or 302 for login redirect is fine)
-        self.assertIn(response.status_code, [200, 302])
+        # Should work without redirect (200 is expected for ping endpoint)
+        self.assertEqual(response.status_code, 200)
         # Most importantly, should NOT be a 301 redirect to HTTPS
         self.assertNotEqual(response.status_code, 301)

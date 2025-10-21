@@ -18,9 +18,9 @@ from django.utils import timezone
 from datetime import timedelta
 from rest_framework.test import APITestCase
 from rest_framework import status
+from django_tenants.utils import schema_context
 
 from api.models import UserProfile
-from tenants.models import Client, Domain
 
 
 User = get_user_model()
@@ -30,72 +30,71 @@ class UserProfileModelTests(TestCase):
     """Test UserProfile model functionality."""
     
     def setUp(self):
-        self.user = User.objects.create_user(
-            username='test@example.com',
-            email='test@example.com',
-            password='TestP@ss123456'
-        )
+        """Create test user in test_tenant schema."""
+        # User creation must happen in a tenant schema, not public
+        with schema_context('test_tenant'):
+            self.user = User.objects.create_user(
+                username='test@example.com',
+                email='test@example.com',
+                password='TestP@ss123456'
+            )
     
     def test_user_profile_creation(self):
         """UserProfile can be created with default values."""
-        profile = UserProfile.objects.create(user=self.user)
-        
-        self.assertFalse(profile.email_verified)
-        self.assertIsNotNone(profile.email_verification_token)
-        self.assertIsNone(profile.email_verification_sent_at)
+        with schema_context('test_tenant'):
+            profile = UserProfile.objects.create(user=self.user)
+            
+            self.assertFalse(profile.email_verified)
+            self.assertIsNotNone(profile.email_verification_token)
+            self.assertIsNone(profile.email_verification_sent_at)
     
     def test_is_verification_token_expired_no_sent_at(self):
         """Token is considered expired if never sent."""
-        profile = UserProfile.objects.create(user=self.user)
-        
-        self.assertTrue(profile.is_verification_token_expired())
+        with schema_context('test_tenant'):
+            profile = UserProfile.objects.create(user=self.user)
+            
+            self.assertTrue(profile.is_verification_token_expired())
     
     def test_is_verification_token_expired_recent(self):
         """Token is not expired if sent recently."""
-        profile = UserProfile.objects.create(
-            user=self.user,
-            email_verification_sent_at=timezone.now()
-        )
-        
-        self.assertFalse(profile.is_verification_token_expired())
+        with schema_context('test_tenant'):
+            profile = UserProfile.objects.create(
+                user=self.user,
+                email_verification_sent_at=timezone.now()
+            )
+            
+            self.assertFalse(profile.is_verification_token_expired())
     
     def test_is_verification_token_expired_old(self):
         """Token is expired after 48 hours."""
-        old_time = timezone.now() - timedelta(hours=49)
-        profile = UserProfile.objects.create(
-            user=self.user,
-            email_verification_sent_at=old_time
-        )
-        
-        self.assertTrue(profile.is_verification_token_expired())
+        with schema_context('test_tenant'):
+            old_time = timezone.now() - timedelta(hours=49)
+            profile = UserProfile.objects.create(
+                user=self.user,
+                email_verification_sent_at=old_time
+            )
+            
+            self.assertTrue(profile.is_verification_token_expired())
     
     def test_regenerate_verification_token(self):
         """Regenerating token creates new UUID and updates timestamp."""
-        profile = UserProfile.objects.create(user=self.user)
-        old_token = profile.email_verification_token
-        
-        profile.regenerate_verification_token()
-        
-        self.assertNotEqual(profile.email_verification_token, old_token)
-        self.assertIsNotNone(profile.email_verification_sent_at)
+        with schema_context('test_tenant'):
+            profile = UserProfile.objects.create(user=self.user)
+            old_token = profile.email_verification_token
+            
+            profile.regenerate_verification_token()
+            
+            self.assertNotEqual(profile.email_verification_token, old_token)
+            self.assertIsNotNone(profile.email_verification_sent_at)
 
 
 class RegistrationWithEmailVerificationTests(APITestCase):
     """Test registration flow with email verification."""
     
     def setUp(self):
-        """Set up test client with public domain for django-tenants."""
+        """Set up test client - conftest.py handles domain setup."""
         super().setUp()
-        # Ensure public tenant and domain exist
-        tenant, _ = Client.objects.get_or_create(
-            schema_name="public",
-            defaults={"name": "Public Tenant"}
-        )
-        Domain.objects.get_or_create(
-            tenant=tenant,
-            domain="testserver",
-            defaults={"is_primary": True}
-        )
+        # Domain creation handled by conftest.py ensure_test_tenant fixture
     
     @patch('api.utils.send_verification_email')
     def test_registration_creates_user_profile(self, mock_send_email):
@@ -141,29 +140,22 @@ class EmailVerificationEndpointTests(APITestCase):
     """Test email verification endpoint."""
     
     def setUp(self):
-        """Set up test user and public domain."""
+        """Set up test user in test_tenant schema."""
         super().setUp()
-        # Ensure public tenant and domain exist
-        tenant, _ = Client.objects.get_or_create(
-            schema_name="public",
-            defaults={"name": "Public Tenant"}
-        )
-        Domain.objects.get_or_create(
-            tenant=tenant,
-            domain="testserver",
-            defaults={"is_primary": True}
-        )
+        # No need to create testserver domain - conftest.py handles it
         
-        self.user = User.objects.create_user(
-            username='verify@example.com',
-            email='verify@example.com',
-            password='TestP@ss123456'
-        )
-        self.profile = UserProfile.objects.create(
-            user=self.user,
-            email_verification_sent_at=timezone.now()
-        )
-        self.token = self.profile.email_verification_token
+        # Create user in test_tenant schema
+        with schema_context('test_tenant'):
+            self.user = User.objects.create_user(
+                username='verify@example.com',
+                email='verify@example.com',
+                password='TestP@ss123456'
+            )
+            self.profile = UserProfile.objects.create(
+                user=self.user,
+                email_verification_sent_at=timezone.now()
+            )
+            self.token = self.profile.email_verification_token
     
     def test_verify_email_success(self):
         """Valid token verifies email successfully."""
@@ -186,8 +178,9 @@ class EmailVerificationEndpointTests(APITestCase):
     
     def test_verify_email_already_verified(self):
         """Verifying already-verified email returns success message."""
-        self.profile.email_verified = True
-        self.profile.save()
+        with schema_context('test_tenant'):
+            self.profile.email_verified = True
+            self.profile.save()
         
         response = self.client.post(f'/api/auth/verify-email/{self.token}/')
         
@@ -197,8 +190,9 @@ class EmailVerificationEndpointTests(APITestCase):
     def test_verify_email_expired_token(self):
         """Expired token returns 400 with expired flag."""
         old_time = timezone.now() - timedelta(hours=49)
-        self.profile.email_verification_sent_at = old_time
-        self.profile.save()
+        with schema_context('test_tenant'):
+            self.profile.email_verification_sent_at = old_time
+            self.profile.save()
         
         response = self.client.post(f'/api/auth/verify-email/{self.token}/')
         
@@ -211,28 +205,21 @@ class ResendVerificationEmailTests(APITestCase):
     """Test resend verification email endpoint."""
     
     def setUp(self):
-        """Set up test user and public domain."""
+        """Set up test user in test_tenant schema."""
         super().setUp()
-        # Ensure public tenant and domain exist
-        tenant, _ = Client.objects.get_or_create(
-            schema_name="public",
-            defaults={"name": "Public Tenant"}
-        )
-        Domain.objects.get_or_create(
-            tenant=tenant,
-            domain="testserver",
-            defaults={"is_primary": True}
-        )
+        # No need to create testserver domain - conftest.py handles it
         
-        self.user = User.objects.create_user(
-            username='resend@example.com',
-            email='resend@example.com',
-            password='TestP@ss123456'
-        )
-        self.profile = UserProfile.objects.create(
-            user=self.user,
-            email_verification_sent_at=timezone.now()
-        )
+        # Create user in test_tenant schema
+        with schema_context('test_tenant'):
+            self.user = User.objects.create_user(
+                username='resend@example.com',
+                email='resend@example.com',
+                password='TestP@ss123456'
+            )
+            self.profile = UserProfile.objects.create(
+                user=self.user,
+                email_verification_sent_at=timezone.now()
+            )
     
     def test_resend_requires_authentication(self):
         """Resend endpoint requires authentication."""
@@ -254,7 +241,8 @@ class ResendVerificationEmailTests(APITestCase):
         self.assertIn('resent', response.data['detail'].lower())
         
         # Verify new token was generated
-        self.profile.refresh_from_db()
+        with schema_context('test_tenant'):
+            self.profile.refresh_from_db()
         self.assertNotEqual(self.profile.email_verification_token, old_token)
         
         # Verify email was sent
@@ -262,8 +250,9 @@ class ResendVerificationEmailTests(APITestCase):
     
     def test_resend_already_verified(self):
         """Cannot resend if email already verified."""
-        self.profile.email_verified = True
-        self.profile.save()
+        with schema_context('test_tenant'):
+            self.profile.email_verified = True
+            self.profile.save()
         
         self.client.force_authenticate(user=self.user)
         response = self.client.post('/api/auth/resend-verification/')
@@ -276,39 +265,43 @@ class EmailSendingTests(TestCase):
     """Test actual email sending functionality."""
     
     def setUp(self):
-        self.user = User.objects.create_user(
-            username='emailtest@example.com',
-            email='emailtest@example.com',
-            password='TestP@ss123456'
-        )
+        """Create test user in test_tenant schema."""
+        with schema_context('test_tenant'):
+            self.user = User.objects.create_user(
+                username='emailtest@example.com',
+                email='emailtest@example.com',
+                password='TestP@ss123456'
+            )
     
     def test_verification_email_sent(self):
         """Verification email is actually sent."""
         from api.utils import send_verification_email
         import uuid
         
-        token = uuid.uuid4()
-        result = send_verification_email(self.user, token)
-        
-        # With console backend, email is "sent" to console
-        self.assertTrue(result)
-        
-        # Check that email was added to outbox
-        self.assertEqual(len(mail.outbox), 1)
-        
-        # Check email details
-        email = mail.outbox[0]
-        self.assertEqual(email.to, [self.user.email])
-        self.assertIn('Verify', email.subject)
-        self.assertIn(str(token), email.body)
+        with schema_context('test_tenant'):
+            token = uuid.uuid4()
+            result = send_verification_email(self.user, token)
+            
+            # With console backend, email is "sent" to console
+            self.assertTrue(result)
+            
+            # Check that email was added to outbox
+            self.assertEqual(len(mail.outbox), 1)
+            
+            # Check email details
+            email = mail.outbox[0]
+            self.assertEqual(email.to, [self.user.email])
+            self.assertIn('Verify', email.subject)
+            self.assertIn(str(token), email.body)
     
     def test_welcome_email_sent(self):
         """Welcome email is sent after verification."""
         from api.utils import send_welcome_email
         
-        result = send_welcome_email(self.user)
-        
-        self.assertTrue(result)
+        with schema_context('test_tenant'):
+            result = send_welcome_email(self.user)
+            
+            self.assertTrue(result)
         self.assertEqual(len(mail.outbox), 1)
         
         email = mail.outbox[0]

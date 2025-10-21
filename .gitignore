@@ -37,3 +37,9 @@ Thumbs.db
 
 # keep VS Code workspace files committed
 !.vscode/
+
+#backend logs
+backend/logs/
+
+#logs
+.github/logs/

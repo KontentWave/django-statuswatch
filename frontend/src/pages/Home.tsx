@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
+import { toast } from "sonner";
+
 import { api } from "@/lib/api";
 import { STRIPE_PK } from "@/lib/config";
-import { toast } from "sonner";
+import { storeAuthTokens } from "@/lib/auth";
 
 export default function Home() {
   const loginDemo = async () => {
@@ -10,7 +12,7 @@ export default function Home() {
         username: "jwt",
         password: "JwtP@ss123456",
       });
-      localStorage.setItem("jwt", data.access);
+      storeAuthTokens({ access: data.access, refresh: data.refresh });
       toast.success("Logged in (jwt)");
     } catch (error: unknown) {
       const detail =

@@ -10,25 +10,7 @@ from django.urls import reverse
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
-from tenants.models import Client, Domain
-
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-@pytest.fixture(autouse=True)
-def ensure_public_domain(db):
-    """Ensure public tenant and domain exist for tests."""
-    tenant = Client.objects.filter(schema_name="public").first()
-    if tenant is None:
-        tenant = Client(schema_name="public", name="Public Tenant")
-        tenant.auto_create_schema = False
-        tenant.save()
-
-    Domain.objects.get_or_create(
-        tenant=tenant,
-        domain="testserver",
-        defaults={"is_primary": True},
-    )
 
 
 @pytest.fixture(autouse=True)

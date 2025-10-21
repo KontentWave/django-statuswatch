@@ -4,8 +4,10 @@ import logging
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
+from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.utils.text import slugify
+from django_tenants.utils import schema_context, get_public_schema_name
 from rest_framework import serializers
 
 from tenants.models import Client, Domain
@@ -16,6 +18,33 @@ from api.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """
+    Serializer for authenticated user information.
+    
+    Returns core user fields and group memberships.
+    """
+    groups = serializers.SerializerMethodField()
+
+    class Meta:
+        model = get_user_model()
+        fields = [
+            'id',
+            'username',
+            'email',
+            'first_name',
+            'last_name',
+            'is_staff',
+            'date_joined',
+            'groups',
+        ]
+        read_only_fields = fields
+
+    def get_groups(self, obj):
+        """Return list of group names the user belongs to."""
+        return [group.name for group in obj.groups.all()]
 
 
 class RegistrationSerializer(serializers.Serializer):
@@ -63,29 +92,70 @@ class RegistrationSerializer(serializers.Serializer):
         email: str = validated_data["email"].lower()
         password: str = validated_data["password"]
 
-        try:
-            with transaction.atomic():
-                schema_name = self._build_schema_name(organization_name)
-                
-                tenant = Client(schema_name=schema_name, name=organization_name)
-                tenant.save()  # auto-creates the schema via django-tenants
+        logger.info(
+            "Starting tenant registration",
+            extra={"email": email, "organization_name": organization_name},
+        )
 
-                self._create_domain(tenant, schema_name)
-                self._create_owner_user(schema_name, email, password)
+        tenant = None
+        schema_created = False
+
+        try:
+            schema_name = self._build_schema_name(organization_name)
+            public_schema = getattr(settings, "PUBLIC_SCHEMA_NAME", get_public_schema_name())
+
+            with schema_context(public_schema):
+                tenant = Client(schema_name=schema_name, name=organization_name)
+                tenant.save()
+                schema_created = True
 
                 logger.info(
-                    f"Successfully created tenant '{schema_name}' with owner {email}",
-                    extra={'schema_name': schema_name, 'email': email}
+                    "Tenant record saved in public schema",
+                    extra={"schema_name": schema_name, "email": email},
                 )
-                
-                return {"detail": self.default_detail_message}
-        
+
+                self._create_domain(tenant, schema_name)
+
+            logger.info(
+                "Applying tenant schema migrations",
+                extra={"schema_name": schema_name, "email": email},
+            )
+
+            call_command(
+                "migrate_schemas",
+                schema_name=schema_name,
+                interactive=False,
+                verbosity=0,
+            )
+
+            logger.info(
+                "Tenant migrations applied",
+                extra={"schema_name": schema_name, "email": email},
+            )
+
+            self._create_owner_user(schema_name, email, password)
+
+            logger.info(
+                "Successfully created tenant and owner user",
+                extra={"schema_name": schema_name, "email": email},
+            )
+
+            return {"detail": self.default_detail_message}
+
         except IntegrityError as e:
             # Database constraint violation (e.g., duplicate email in tenant)
             logger.warning(
                 f"IntegrityError during registration for {email}: {str(e)}",
                 extra={'email': email, 'organization_name': organization_name}
             )
+            if schema_created and tenant is not None:
+                try:
+                    tenant.delete(force_drop=True)
+                except Exception:
+                    logger.exception(
+                        "Failed to clean up tenant after IntegrityError",
+                        extra={'email': email, 'schema_name': getattr(tenant, 'schema_name', None)},
+                    )
             if 'email' in str(e).lower() or 'username' in str(e).lower():
                 raise DuplicateEmailError(
                     "This email address is already registered."
@@ -99,6 +169,14 @@ class RegistrationSerializer(serializers.Serializer):
                 exc_info=True,
                 extra={'email': email, 'organization_name': organization_name}
             )
+            if schema_created and tenant is not None:
+                try:
+                    tenant.delete(force_drop=True)
+                except Exception:
+                    logger.exception(
+                        "Failed to clean up tenant after unexpected error",
+                        extra={'email': email, 'schema_name': getattr(tenant, 'schema_name', None)},
+                    )
             raise TenantCreationError()
 
     # ------------------------------------------------------------------
@@ -136,38 +214,38 @@ class RegistrationSerializer(serializers.Serializer):
 
     def _create_owner_user(self, schema_name: str, email: str, password: str) -> None:
         from django.contrib.auth.models import Group
-        from django_tenants.utils import schema_context
         from django.utils import timezone
 
         UserModel = get_user_model()
 
         try:
             with schema_context(schema_name):
-                user = UserModel.objects.create_user(
-                    username=email,
-                    email=email,
-                    password=password,
-                )
-                owner_group, _ = Group.objects.get_or_create(name="Owner")
-                user.groups.add(owner_group)
-                
-                # Create user profile with email verification token
-                from .models import UserProfile
-                profile = UserProfile.objects.create(
-                    user=user,
-                    email_verified=False,
-                    email_verification_sent_at=timezone.now()
-                )
-                
-                # Send verification email
-                from .utils import send_verification_email
-                send_verification_email(user, profile.email_verification_token)
-                
-                logger.info(
-                    f"Created user profile and sent verification email to {email}",
-                    extra={'email': email, 'schema_name': schema_name}
-                )
-                
+                with transaction.atomic():
+                    user = UserModel.objects.create_user(
+                        username=email,
+                        email=email,
+                        password=password,
+                    )
+                    owner_group, _ = Group.objects.get_or_create(name="Owner")
+                    user.groups.add(owner_group)
+
+                    # Create user profile with email verification token
+                    from .models import UserProfile
+                    profile = UserProfile.objects.create(
+                        user=user,
+                        email_verified=False,
+                        email_verification_sent_at=timezone.now()
+                    )
+
+                    # Send verification email
+                    from .utils import send_verification_email
+                    send_verification_email(user, profile.email_verification_token)
+
+                    logger.info(
+                        f"Created user profile and sent verification email to {email}",
+                        extra={'email': email, 'schema_name': schema_name}
+                    )
+
         except IntegrityError as e:
             logger.error(
                 f"Failed to create owner user {email} in schema {schema_name}: {str(e)}",

@@ -16,6 +16,10 @@ export function customZodResolver<T extends ZodSchema>(schema: T) {
     _context: TContext | undefined,
     _options: ResolverOptions<TFieldValues>
   ): Promise<ResolverResult<TFieldValues>> => {
+    // Explicitly mark unused parameters to satisfy linting rules
+    void _context;
+    void _options;
+
     try {
       const data = await schema.parseAsync(values);
       return {

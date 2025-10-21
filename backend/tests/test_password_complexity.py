@@ -163,24 +163,11 @@ class TestRegistrationPasswordValidation:
     """Test password validation through the registration endpoint."""
 
     @pytest.fixture(autouse=True)
-    def setup_public_domain(self, db):
-        """Ensure public tenant and domain exist."""
-        from tenants.models import Client, Domain
+    def setup_test_cache(self, db):
+        """Clear throttle cache before each test."""
         from django.core.cache import cache
-        
         cache.clear()  # Clear throttle cache
-        
-        tenant = Client.objects.filter(schema_name="public").first()
-        if tenant is None:
-            tenant = Client(schema_name="public", name="Public Tenant")
-            tenant.auto_create_schema = False
-            tenant.save()
-
-        Domain.objects.get_or_create(
-            tenant=tenant,
-            domain="testserver",
-            defaults={"is_primary": True},
-        )
+        # Domain setup handled by conftest.py ensure_test_tenant
 
     def test_registration_rejects_weak_password(self, client):
         """Test that registration rejects passwords that don't meet requirements."""
