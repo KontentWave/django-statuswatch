@@ -28,8 +28,11 @@ vi.mock("@tanstack/react-router", async () => {
         key: "test",
         params: {},
         href: "/login",
+        searchStr: "",
+        publicHref: "/login",
+        url: new URL("http://localhost/login"),
         state: locationState.current,
-      } as ReturnType<typeof actual.useLocation>),
+      } as unknown as ReturnType<typeof actual.useLocation>),
   };
 });
 
