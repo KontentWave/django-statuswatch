@@ -7,6 +7,7 @@ __pycache__/
 *.sqlite3
 *.db
 *.log
+*.log.*
 .env
 .env.*
 !.env.example
@@ -16,6 +17,10 @@ __pycache__/
 htmlcov/
 staticfiles/
 media/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
 
 # ---- node / vite ----
 frontend/node_modules/
@@ -38,8 +43,18 @@ Thumbs.db
 # keep VS Code workspace files committed
 !.vscode/
 
-#backend logs
+# ---- backend logs ----
 backend/logs/
 
-#logs
+# ---- documentation / diagnostics ----
+# Audit reports (optional - uncomment to keep local only)
+.github/docs/Audits/
 .github/logs/
+diagnostic_output.txt
+enhanced_logging_config.py
+
+# Temporary/backup files
+*.tmp
+*.bak
+*.swp
+*~

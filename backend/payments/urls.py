@@ -1,7 +1,10 @@
 from django.urls import path
-from .views import stripe_config, create_checkout_session
+
+from .views import create_checkout_session, stripe_config
 
 urlpatterns = [
     path("config/", stripe_config, name="stripe_config"),
-    path("create-checkout-session/", create_checkout_session, name="stripe_create_checkout_session"),
+    path(
+        "create-checkout-session/", create_checkout_session, name="stripe_create_checkout_session"
+    ),
 ]

@@ -14,7 +14,6 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.utils.text import slugify
 from django_tenants.utils import schema_context
-
 from tenants.models import Client, Domain
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -70,10 +69,7 @@ def stark_industries_tenant(db):
     yield fixture_data
 
     # Cleanup: remove tokens/users and drop tenant schema to keep DB clean between tests
-    from rest_framework_simplejwt.token_blacklist.models import (
-        BlacklistedToken,
-        OutstandingToken,
-    )
+    from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
     connection.set_schema_to_public()
 
@@ -85,14 +81,10 @@ def stark_industries_tenant(db):
     tenant.delete(force_drop=True)
 
 
-
 def _post_json(client, url, payload, http_host="testserver"):
     """Helper to POST JSON data with optional HTTP_HOST header for tenant routing."""
     return client.post(
-        url, 
-        data=json.dumps(payload), 
-        content_type="application/json",
-        HTTP_HOST=http_host
+        url, data=json.dumps(payload), content_type="application/json", HTTP_HOST=http_host
     )
 
 
@@ -111,7 +103,7 @@ def test_login_with_valid_credentials_returns_jwt_tokens(client, stark_industrie
     tenant_host = stark_industries_tenant["domain"]
     print(f"Using HTTP_HOST: {tenant_host}")
     response = _post_json(client, "/api/auth/token/", payload, http_host=tenant_host)
-    
+
     # Debug: print response details if not 200
     if response.status_code != 200:
         # Provide minimal debug info if the test fails
@@ -176,7 +168,7 @@ def test_refresh_token_returns_new_access_token(client, stark_industries_tenant)
     THEN the API returns 200 with a new access token
     """
     tenant_host = stark_industries_tenant["domain"]
-    
+
     # First, log in to get refresh token
     login_payload = {
         "username": stark_industries_tenant["username"],
@@ -188,7 +180,9 @@ def test_refresh_token_returns_new_access_token(client, stark_industries_tenant)
 
     # Now use refresh token to get new access token
     refresh_payload = {"refresh": refresh_token}
-    refresh_response = _post_json(client, "/api/auth/token/refresh/", refresh_payload, http_host=tenant_host)
+    refresh_response = _post_json(
+        client, "/api/auth/token/refresh/", refresh_payload, http_host=tenant_host
+    )
 
     assert refresh_response.status_code == 200
     data = refresh_response.json()

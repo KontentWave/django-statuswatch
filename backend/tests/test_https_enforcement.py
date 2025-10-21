@@ -9,7 +9,7 @@ Verifies:
 """
 
 import pytest
-from django.test import TestCase, override_settings, Client
+from django.test import TestCase, override_settings
 from django_tenants.test.client import TenantClient
 from tenants.models import Client as TenantModel
 
@@ -20,7 +20,7 @@ class HTTPSEnforcementTests(TestCase):
     def setUp(self):
         """Set up test tenant for HTTPS tests."""
         # Use test_tenant created by conftest.py fixture
-        self.tenant = TenantModel.objects.get(schema_name='test_tenant')
+        self.tenant = TenantModel.objects.get(schema_name="test_tenant")
         # Domains already created by conftest.py ensure_test_tenant
 
     @override_settings(
@@ -36,7 +36,7 @@ class HTTPSEnforcementTests(TestCase):
         """HTTP requests should redirect to HTTPS when ENFORCE_HTTPS=True."""
         client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=False)
-        
+
         # Should redirect to HTTPS
         self.assertEqual(response.status_code, 301)
         self.assertTrue(response.url.startswith("https://"))
@@ -49,7 +49,7 @@ class HTTPSEnforcementTests(TestCase):
         """HTTP requests should work normally when ENFORCE_HTTPS=False."""
         client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=False)
-        
+
         # Should not redirect (200 OK or 404, but not 301)
         self.assertNotEqual(response.status_code, 301)
 
@@ -63,18 +63,18 @@ class HTTPSEnforcementTests(TestCase):
         """HSTS headers should be present on HTTPS requests when enforced."""
         client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=True)
-        
+
         # Check HSTS header exists
         self.assertIn("Strict-Transport-Security", response.headers)
-        
+
         hsts_value = response["Strict-Transport-Security"]
-        
+
         # Should include max-age
         self.assertIn("max-age=3600", hsts_value)
-        
+
         # Should include subdomains
         self.assertIn("includeSubDomains", hsts_value)
-        
+
         # Should NOT include preload (unless explicitly set)
         self.assertNotIn("preload", hsts_value)
 
@@ -88,9 +88,9 @@ class HTTPSEnforcementTests(TestCase):
         """HSTS headers should include preload when configured."""
         client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=True)
-        
+
         hsts_value = response.get("Strict-Transport-Security", "")
-        
+
         # Should include preload directive
         self.assertIn("preload", hsts_value)
         self.assertIn("max-age=31536000", hsts_value)
@@ -103,7 +103,7 @@ class HTTPSEnforcementTests(TestCase):
         """HSTS headers should NOT be present when ENFORCE_HTTPS=False."""
         client = TenantClient(self.tenant)
         response = client.get("/api/ping/", secure=False)
-        
+
         # HSTS header should not be present or should be max-age=0
         hsts_value = response.get("Strict-Transport-Security", "")
         if hsts_value:
@@ -119,7 +119,7 @@ class HTTPSEnforcementTests(TestCase):
         """Cookies should have Secure flag when ENFORCE_HTTPS=True."""
         # Check session cookie settings
         from django.conf import settings
-        
+
         self.assertTrue(settings.SESSION_COOKIE_SECURE)
         self.assertTrue(settings.CSRF_COOKIE_SECURE)
         self.assertTrue(settings.SESSION_COOKIE_HTTPONLY)
@@ -133,27 +133,25 @@ class HTTPSEnforcementTests(TestCase):
     def test_insecure_cookies_in_development(self):
         """Cookies should NOT have Secure flag in development."""
         from django.conf import settings
-        
+
         self.assertFalse(settings.SESSION_COOKIE_SECURE)
         self.assertFalse(settings.CSRF_COOKIE_SECURE)
 
     def test_security_middleware_installed(self):
         """SecurityMiddleware should be properly configured."""
         from django.conf import settings
-        
+
         middleware = settings.MIDDLEWARE
-        
+
         # SecurityMiddleware should be present
         self.assertIn(
             "django.middleware.security.SecurityMiddleware",
             middleware,
         )
-        
+
         # It should be early in the middleware stack
         # (within the first 3 entries is reasonable)
-        security_index = middleware.index(
-            "django.middleware.security.SecurityMiddleware"
-        )
+        security_index = middleware.index("django.middleware.security.SecurityMiddleware")
         self.assertLess(
             security_index,
             3,
@@ -166,13 +164,13 @@ class HTTPSEnforcementTests(TestCase):
     def test_respects_x_forwarded_proto_header(self):
         """Should respect X-Forwarded-Proto header from reverse proxy."""
         client = TenantClient(self.tenant)
-        
+
         # Simulate reverse proxy setting X-Forwarded-Proto
         response = client.get(
             "/api/ping/",
             HTTP_X_FORWARDED_PROTO="https",
         )
-        
+
         # Request should be treated as HTTPS
         # (exact behavior depends on SECURE_SSL_REDIRECT setting)
         self.assertIsNotNone(response)
@@ -184,7 +182,7 @@ class CookieSecurityTests(TestCase):
     def test_cookie_samesite_configured(self):
         """SameSite cookie attribute should be configured."""
         from django.conf import settings
-        
+
         # SameSite should be set for CSRF and Session cookies
         self.assertEqual(settings.SESSION_COOKIE_SAMESITE, "Lax")
         self.assertEqual(settings.CSRF_COOKIE_SAMESITE, "Lax")
@@ -192,7 +190,7 @@ class CookieSecurityTests(TestCase):
     def test_cookie_httponly_configured(self):
         """HttpOnly flag should be set for cookies."""
         from django.conf import settings
-        
+
         self.assertTrue(settings.SESSION_COOKIE_HTTPONLY)
         self.assertTrue(settings.CSRF_COOKIE_HTTPONLY)
 
@@ -204,7 +202,7 @@ class HTTPSIntegrationTests(TestCase):
     def setUp(self):
         """Set up test tenant for HTTPS integration tests."""
         # Use test_tenant created by conftest.py fixture
-        self.tenant = TenantModel.objects.get(schema_name='test_tenant')
+        self.tenant = TenantModel.objects.get(schema_name="test_tenant")
         # Domains already created by conftest.py ensure_test_tenant
 
     @override_settings(
@@ -214,19 +212,17 @@ class HTTPSIntegrationTests(TestCase):
     def test_api_endpoints_redirect_to_https(self):
         """All API endpoints should redirect HTTP to HTTPS."""
         client = TenantClient(self.tenant)
-        
+
         # Test endpoints that exist in all configurations
         endpoints = [
             "/admin/",
             "/admin/login/",
         ]
-        
+
         for endpoint in endpoints:
             with self.subTest(endpoint=endpoint):
-                response = client.get(
-                    endpoint, secure=False
-                )
-                
+                response = client.get(endpoint, secure=False)
+
                 # Should redirect to HTTPS (301)
                 self.assertEqual(
                     response.status_code,

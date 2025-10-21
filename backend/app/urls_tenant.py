@@ -1,7 +1,7 @@
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 from django.contrib import admin
-from django.urls import path, include
 from django.http import HttpResponse
+from django.urls import include, path
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -15,4 +15,3 @@ urlpatterns += [
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
     path("", lambda r: HttpResponse("tenant OK"), name="tenant-home"),
 ]
-

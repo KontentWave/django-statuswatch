@@ -1,11 +1,13 @@
+from api.views import TokenObtainPairWithLoggingView
 from django.contrib import admin
 from django.http import HttpResponse
 from django.urls import include, path
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from api.views import TokenObtainPairWithLoggingView
 
-def home(_): return HttpResponse("public OK")
+def home(_):
+    return HttpResponse("public OK")
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),

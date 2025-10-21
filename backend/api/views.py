@@ -9,11 +9,11 @@ from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenViewBase
 
+from .audit_log import AuditEvent, log_audit_event
 from .logging_utils import sanitize_log_value
 from .models import UserProfile
 from .serializers import RegistrationSerializer, UserSerializer
 from .throttles import BurstRateThrottle, LoginRateThrottle, RegistrationRateThrottle
-
 
 auth_logger = logging.getLogger("api.auth")
 
@@ -36,9 +36,10 @@ class SecurePingView(APIView):
 class CurrentUserView(APIView):
     """
     Return information about the currently authenticated user.
-    
+
     Returns user details including groups. Requires valid JWT.
     """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -59,14 +60,15 @@ class CurrentUserView(APIView):
 class RegistrationView(APIView):
     """
     User registration endpoint with rate limiting.
-    
+
     Creates a new tenant (organization) and owner user account.
     Protected by rate limiting to prevent spam and abuse.
-    
+
     Rate limits:
     - 5 registrations per hour per IP
     - 20 requests per minute burst protection
     """
+
     authentication_classes = []
     permission_classes = [AllowAny]
     throttle_classes = [RegistrationRateThrottle, BurstRateThrottle]
@@ -75,6 +77,29 @@ class RegistrationView(APIView):
         serializer = RegistrationSerializer(data=request.data)
         if serializer.is_valid():
             payload = serializer.save()
+
+            # Log audit events for registration
+            log_audit_event(
+                event=AuditEvent.USER_REGISTERED,
+                user_id=payload.get("user", {}).get("id"),
+                user_email=payload.get("user", {}).get("email"),
+                ip_address=TokenObtainPairWithLoggingView._extract_ip(request),
+                tenant_schema=payload.get("tenant", {}).get("schema_name"),
+                details={"org_name": payload.get("tenant", {}).get("name")},
+            )
+
+            log_audit_event(
+                event=AuditEvent.TENANT_CREATED,
+                user_id=payload.get("user", {}).get("id"),
+                user_email=payload.get("user", {}).get("email"),
+                ip_address=TokenObtainPairWithLoggingView._extract_ip(request),
+                tenant_schema=payload.get("tenant", {}).get("schema_name"),
+                details={
+                    "org_name": payload.get("tenant", {}).get("name"),
+                    "schema_name": payload.get("tenant", {}).get("schema_name"),
+                },
+            )
+
             return Response(payload, status=status.HTTP_201_CREATED)
         return Response({"errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -109,6 +134,16 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
                     "user_agent": user_agent,
                 },
             )
+
+            # Log audit event for failed login
+            log_audit_event(
+                event=AuditEvent.USER_LOGIN_FAILED,
+                user_email=username,
+                ip_address=ip_address,
+                tenant_schema=schema_name,
+                details={"reason": reason, "user_agent": user_agent},
+            )
+
             raise InvalidToken(reason) from exc
 
         user = getattr(serializer, "user", None)
@@ -123,6 +158,16 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
             },
         )
 
+        # Log audit event for successful login
+        log_audit_event(
+            event=AuditEvent.USER_LOGIN,
+            user_id=getattr(user, "id", None),
+            user_email=username or getattr(user, "email", None),
+            ip_address=ip_address,
+            tenant_schema=schema_name,
+            details={"user_agent": user_agent},
+        )
+
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
     @staticmethod
@@ -133,123 +178,106 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
         return request.META.get("REMOTE_ADDR", "unknown")
 
 
-@api_view(['GET', 'POST'])
+@api_view(["GET", "POST"])
 def verify_email(request, token):
     """
     Verify user's email address using the token sent via email.
-    
+
     This endpoint is public (no authentication required) and uses the
     verification token to identify and verify the user.
     Accepts both GET (for email links) and POST (for API calls).
-    
+
     Args:
         token: UUID token sent to user's email
-        
+
     Returns:
         200: Email verified successfully
         400: Invalid or expired token
         404: Token not found
     """
     try:
-        profile = UserProfile.objects.select_related('user').get(
-            email_verification_token=token
-        )
+        profile = UserProfile.objects.select_related("user").get(email_verification_token=token)
     except UserProfile.DoesNotExist:
-        return Response(
-            {"error": "Invalid verification token."},
-            status=status.HTTP_404_NOT_FOUND
-        )
-    
+        return Response({"error": "Invalid verification token."}, status=status.HTTP_404_NOT_FOUND)
+
     # Check if already verified
     if profile.email_verified:
         return Response(
-            {"detail": "Email already verified. You can now log in."},
-            status=status.HTTP_200_OK
+            {"detail": "Email already verified. You can now log in."}, status=status.HTTP_200_OK
         )
-    
+
     # Check if token expired
     if profile.is_verification_token_expired():
         return Response(
-            {
-                "error": "Verification token has expired. Please request a new one.",
-                "expired": True
-            },
-            status=status.HTTP_400_BAD_REQUEST
+            {"error": "Verification token has expired. Please request a new one.", "expired": True},
+            status=status.HTTP_400_BAD_REQUEST,
         )
-    
+
     # Verify the email
     profile.email_verified = True
     profile.save()
-    
+
     return Response(
-        {"detail": "Email verified successfully! You can now log in."},
-        status=status.HTTP_200_OK
+        {"detail": "Email verified successfully! You can now log in."}, status=status.HTTP_200_OK
     )
 
 
-@api_view(['POST'])
+@api_view(["POST"])
 def resend_verification_email(request):
     """
     Resend verification email to the user.
-    
+
     User must be authenticated but not yet verified. This allows users
     who didn't receive the email or whose token expired to get a new one.
-    
+
     Rate limited to prevent abuse.
-    
+
     Returns:
         200: Email resent successfully
         400: Email already verified or rate limit exceeded
     """
     if not request.user.is_authenticated:
-        return Response(
-            {"error": "Authentication required."},
-            status=status.HTTP_401_UNAUTHORIZED
-        )
-    
+        return Response({"error": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+
     try:
         profile = request.user.profile
     except UserProfile.DoesNotExist:
-        return Response(
-            {"error": "User profile not found."},
-            status=status.HTTP_404_NOT_FOUND
-        )
-    
+        return Response({"error": "User profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
     if profile.email_verified:
-        return Response(
-            {"error": "Email is already verified."},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
+        return Response({"error": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+
     # Regenerate token and send email
     profile.regenerate_verification_token()
-    
+
     # Import here to avoid circular dependency
     from .utils import send_verification_email
+
     send_verification_email(request.user, profile.email_verification_token)
-    
+
     return Response(
         {"detail": "Verification email has been resent. Please check your inbox."},
-        status=status.HTTP_200_OK
+        status=status.HTTP_200_OK,
     )
 
 
 class LogoutView(APIView):
     """
     Logout endpoint with JWT token blacklisting (P1-05).
-    
+
     Blacklists the refresh token to prevent it from being used again.
     The access token will expire naturally (15 minutes).
-    
+
     Requires authentication via access token.
-    
+
     Request body:
         refresh: The refresh token to blacklist
-    
+
     Returns:
         205: Logout successful, token blacklisted
         400: Invalid or missing refresh token
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -324,4 +352,3 @@ class LogoutView(APIView):
             {"detail": "Logout successful. You have been logged out."},
             status=status.HTTP_205_RESET_CONTENT,
         )
-

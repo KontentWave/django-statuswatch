@@ -4,8 +4,9 @@ Tests for the /api/auth/me/ endpoint (CurrentUserView).
 Validates that authenticated users can retrieve their profile information,
 including groups, and that unauthenticated requests are rejected.
 """
-from datetime import datetime
+
 import time
+from datetime import datetime
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -15,7 +16,6 @@ from django.test import override_settings
 from django_tenants.utils import schema_context
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
-
 from tenants.models import Client, Domain
 
 User = get_user_model()
@@ -25,10 +25,10 @@ User = get_user_model()
 def stark_industries_tenant(db):
     """
     Create a unique tenant for each test with guaranteed cleanup.
-    
+
     Creates tenant with unique schema name to avoid collisions between tests.
     Ensures tenant is deleted even if test fails.
-    
+
     Note: CASCADE patch for teardown is handled globally in conftest.py
     """
     # Generate unique schema name with timestamp
@@ -58,7 +58,7 @@ def stark_industries_tenant(db):
 def test_user_with_groups(stark_industries_tenant):
     """
     Create a test user with Owner and custom groups in the tenant schema.
-    
+
     Returns:
         tuple: (user, access_token) for authenticated requests
     """

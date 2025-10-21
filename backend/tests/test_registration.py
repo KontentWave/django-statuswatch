@@ -2,10 +2,9 @@ import json
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.utils.text import slugify
 from django_tenants.utils import schema_context
-from django.core.cache import cache
-
 from tenants.models import Client
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -70,7 +69,6 @@ def test_register_creates_tenant_and_owner_user(client):
         ),
     ],
 )
-
 def test_register_validation_errors_return_400(client, payload, expected_error_field):
     response = _post_json(client, "/api/auth/register/", payload)
 

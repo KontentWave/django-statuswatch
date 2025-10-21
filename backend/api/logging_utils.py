@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 # Common patterns for secrets we never want written to disk.
 _PATTERNS = (
@@ -11,9 +12,7 @@ _PATTERNS = (
     (re.compile(r"(sk|pk)_(test|live)_[A-Za-z0-9]+"), "[REDACTED_STRIPE_KEY]"),
     # Database / cache connection strings
     (
-        re.compile(
-            r"(?i)(?:postgres(?:ql)?|mysql|redis|mongodb|amqp)://[^\s]+"
-        ),
+        re.compile(r"(?i)(?:postgres(?:ql)?|mysql|redis|mongodb|amqp)://[^\s]+"),
         "[REDACTED_DSN]",
     ),
     # Bearer tokens / JWTs that may slip into error messages

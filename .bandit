@@ -1,0 +1,16 @@
+[bandit]
+exclude_dirs = [
+    "*/tests/*",
+    "*/migrations/*",
+    "*/scripts/*",
+    "node_modules",
+    ".venv",
+    "staticfiles",
+]
+skips = [
+    "B101",  # assert_used - we use asserts in tests
+    "B105",  # hardcoded_password_string - test constants and enum values
+    "B106",  # hardcoded_password_funcarg - test fixtures
+    "B110",  # try_except_pass - acceptable in specific contexts
+    "B601",  # paramiko_calls - not used
+]

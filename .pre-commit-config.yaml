@@ -1,0 +1,107 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+
+default_language_version:
+  python: python3.12
+  node: "22.18.0"
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(frontend/|.*\.md$)
+      - id: end-of-file-fixer
+        exclude: ^frontend/
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: mixed-line-ending
+
+  # Python formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+        files: ^backend/
+        args: [--config=pyproject.toml]
+
+  # Python import sorting with isort (disabled - conflicts with manual organization)
+  # Use 'make format' to run isort manually if needed
+  # - repo: https://github.com/PyCQA/isort
+  #   rev: 5.13.2
+  #   hooks:
+  #     - id: isort
+  #       files: ^backend/
+  #       args: [--settings-path=pyproject.toml]
+
+  # Python linting with Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        files: ^backend/
+        args: [--config=pyproject.toml, --fix]
+
+  # Python type checking with mypy (disabled in pre-commit, use 'make typecheck' instead)
+  # Mypy needs Django installed and configured, which is complex in pre-commit hooks
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.13.0
+  #   hooks:
+  #     - id: mypy
+  #       files: ^backend/(api|app|tenants|payments)/.*\.py$
+  #       exclude: ^backend/(tests|scripts|migrations)/
+
+  # Django checks
+  - repo: local
+    hooks:
+      - id: django-check
+        name: Django System Check
+        entry: bash -c 'cd backend && python manage.py check --fail-level WARNING'
+        language: system
+        types: [python]
+        files: ^backend/
+        pass_filenames: false
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.0
+    hooks:
+      - id: bandit
+        files: ^backend/
+        args: [-c, pyproject.toml]
+        additional_dependencies: ["bandit[toml]"]
+
+  # Frontend - ESLint
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.17.0
+    hooks:
+      - id: eslint
+        files: ^frontend/src/.*\.[jt]sx?$
+        types: [file]
+        args: [--fix]
+        additional_dependencies:
+          - eslint@9.38.0
+          - typescript-eslint@8.46.2
+          - eslint-plugin-react-hooks@5.2.0
+          - eslint-plugin-react-refresh@0.4.24
+
+  # Frontend - Prettier (optional, uncomment if you want)
+  # - repo: https://github.com/pre-commit/mirrors-prettier
+  #   rev: v4.0.0-alpha.8
+  #   hooks:
+  #     - id: prettier
+  #       files: ^frontend/
+  #       types_or: [javascript, jsx, ts, tsx, json, yaml, markdown]
+
+  # Commit message linting (optional)
+  # - repo: https://github.com/commitizen-tools/commitizen
+  #   rev: v3.31.0
+  #   hooks:
+  #     - id: commitizen
+  #       stages: [commit-msg]

@@ -9,18 +9,16 @@ Tests cover:
 - Access token expiration
 """
 
+from datetime import timedelta
+
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django_tenants.utils import schema_context
 from rest_framework import status
 from rest_framework.test import APIClient
-from rest_framework_simplejwt.token_blacklist.models import (
-    BlacklistedToken,
-    OutstandingToken,
-)
-from datetime import timedelta
-from django.conf import settings
-from django_tenants.utils import schema_context
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
 User = get_user_model()
 
@@ -81,7 +79,7 @@ class TestTokenObtain:
         assert response.status_code == status.HTTP_200_OK
         assert "access" in response.data
         assert "refresh" in response.data
-        
+
         # Tokens should be non-empty strings
         assert isinstance(response.data["access"], str)
         assert isinstance(response.data["refresh"], str)
@@ -120,20 +118,16 @@ class TestTokenRefresh:
 
         # Refresh the token
         url_refresh = reverse("token_refresh")
-        response = api_client.post(
-            url_refresh, {"refresh": refresh_token}, format="json"
-        )
+        response = api_client.post(url_refresh, {"refresh": refresh_token}, format="json")
 
         assert response.status_code == status.HTTP_200_OK
         assert "access" in response.data
-        
+
         # New access token should be different
         new_access = response.data["access"]
         assert new_access != initial_access
 
-    def test_refresh_token_rotation_returns_new_refresh_token(
-        self, api_client, test_user
-    ):
+    def test_refresh_token_rotation_returns_new_refresh_token(self, api_client, test_user):
         """Should return a new refresh token when ROTATE_REFRESH_TOKENS is enabled."""
         # Get initial tokens
         url_obtain = reverse("token_obtain_pair")
@@ -150,14 +144,12 @@ class TestTokenRefresh:
 
         assert response.status_code == status.HTTP_200_OK
         assert "refresh" in response.data
-        
+
         # New refresh token should be different
         new_refresh = response.data["refresh"]
         assert new_refresh != old_refresh
 
-    def test_old_refresh_token_blacklisted_after_rotation(
-        self, api_client, test_user
-    ):
+    def test_old_refresh_token_blacklisted_after_rotation(self, api_client, test_user):
         """Old refresh token should be blacklisted after rotation."""
         # Get initial tokens
         url_obtain = reverse("token_obtain_pair")
@@ -181,9 +173,7 @@ class TestTokenRefresh:
     def test_refresh_with_invalid_token(self, api_client):
         """Should reject invalid refresh tokens."""
         url_refresh = reverse("token_refresh")
-        response = api_client.post(
-            url_refresh, {"refresh": "invalid.token.here"}, format="json"
-        )
+        response = api_client.post(url_refresh, {"refresh": "invalid.token.here"}, format="json")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -207,9 +197,7 @@ class TestTokenBlacklist:
         # Logout
         url_logout = reverse("api-logout")
         api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
-        response = api_client.post(
-            url_logout, {"refresh": refresh_token}, format="json"
-        )
+        response = api_client.post(url_logout, {"refresh": refresh_token}, format="json")
 
         assert response.status_code == status.HTTP_205_RESET_CONTENT
         assert "success" in response.data["detail"].lower()
@@ -229,17 +217,13 @@ class TestTokenBlacklist:
         # Logout (blacklist the token)
         url_logout = reverse("api-logout")
         api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
-        response = api_client.post(
-            url_logout, {"refresh": refresh_token}, format="json"
-        )
+        response = api_client.post(url_logout, {"refresh": refresh_token}, format="json")
         assert response.status_code == status.HTTP_205_RESET_CONTENT
 
         # Try to refresh with blacklisted token
         url_refresh = reverse("token_refresh")
         api_client.credentials()  # Clear auth header
-        response = api_client.post(
-            url_refresh, {"refresh": refresh_token}, format="json"
-        )
+        response = api_client.post(url_refresh, {"refresh": refresh_token}, format="json")
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "blacklisted" in str(response.data).lower()
@@ -284,9 +268,7 @@ class TestTokenBlacklist:
         # Try to logout with invalid refresh token
         url_logout = reverse("api-logout")
         api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
-        response = api_client.post(
-            url_logout, {"refresh": "invalid.token.here"}, format="json"
-        )
+        response = api_client.post(url_logout, {"refresh": "invalid.token.here"}, format="json")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "invalid" in str(response.data).lower()

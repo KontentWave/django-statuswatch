@@ -12,16 +12,16 @@ Ensures that passwords meet security standards:
 """
 
 import pytest
-from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
 from api.password_validators import (
-    MinimumLengthValidator,
-    UppercaseValidator,
     LowercaseValidator,
+    MaximumLengthValidator,
+    MinimumLengthValidator,
     NumberValidator,
     SpecialCharacterValidator,
-    MaximumLengthValidator,
+    UppercaseValidator,
 )
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 
 User = get_user_model()
 
@@ -41,7 +41,7 @@ class TestPasswordValidators:
         validator = MinimumLengthValidator(min_length=12)
         with pytest.raises(ValidationError) as exc_info:
             validator.validate("Short1!")  # Only 7 characters
-        
+
         assert "at least 12 characters" in str(exc_info.value)
         assert exc_info.value.code == "password_too_short"
 
@@ -56,7 +56,7 @@ class TestPasswordValidators:
         validator = UppercaseValidator()
         with pytest.raises(ValidationError) as exc_info:
             validator.validate("lowercase123!")
-        
+
         assert "uppercase letter" in str(exc_info.value)
         assert exc_info.value.code == "password_no_upper"
 
@@ -71,7 +71,7 @@ class TestPasswordValidators:
         validator = LowercaseValidator()
         with pytest.raises(ValidationError) as exc_info:
             validator.validate("UPPERCASE123!")
-        
+
         assert "lowercase letter" in str(exc_info.value)
         assert exc_info.value.code == "password_no_lower"
 
@@ -86,7 +86,7 @@ class TestPasswordValidators:
         validator = NumberValidator()
         with pytest.raises(ValidationError) as exc_info:
             validator.validate("PasswordOnly!")
-        
+
         assert "at least one number" in str(exc_info.value)
         assert exc_info.value.code == "password_no_number"
 
@@ -103,7 +103,7 @@ class TestPasswordValidators:
         validator = SpecialCharacterValidator()
         with pytest.raises(ValidationError) as exc_info:
             validator.validate("Password123")
-        
+
         assert "special character" in str(exc_info.value)
         assert exc_info.value.code == "password_no_special"
 
@@ -117,7 +117,7 @@ class TestPasswordValidators:
         validator = MaximumLengthValidator(max_length=128)
         with pytest.raises(ValidationError) as exc_info:
             validator.validate("A" * 129)  # 129 characters
-        
+
         assert "no more than 128 characters" in str(exc_info.value)
         assert exc_info.value.code == "password_too_long"
 
@@ -128,7 +128,7 @@ class TestPasswordComplexityIntegration:
     def test_strong_password_passes_all_validators(self):
         """Test that a strong password passes all validation."""
         from django.contrib.auth.password_validation import validate_password
-        
+
         # Should not raise
         strong_passwords = [
             "MySecureP@ssw0rd123",
@@ -136,14 +136,14 @@ class TestPasswordComplexityIntegration:
             "Str0ng&Secure#Pass",
             "Valid123!@#Pass",
         ]
-        
+
         for password in strong_passwords:
             validate_password(password)  # Should not raise
 
     def test_weak_passwords_fail_validation(self):
         """Test that weak passwords fail validation."""
         from django.contrib.auth.password_validation import validate_password
-        
+
         weak_passwords = [
             ("short", "too short"),  # < 12 characters
             ("lowercase123!", "no uppercase"),  # No uppercase
@@ -152,7 +152,7 @@ class TestPasswordComplexityIntegration:
             ("NoSpecialChar123", "no special character"),  # No special char
             ("password123!", "common password"),  # Common password
         ]
-        
+
         for password, reason in weak_passwords:
             with pytest.raises(ValidationError, match=r".+"):
                 validate_password(password)
@@ -166,13 +166,14 @@ class TestRegistrationPasswordValidation:
     def setup_test_cache(self, db):
         """Clear throttle cache before each test."""
         from django.core.cache import cache
+
         cache.clear()  # Clear throttle cache
         # Domain setup handled by conftest.py ensure_test_tenant
 
     def test_registration_rejects_weak_password(self, client):
         """Test that registration rejects passwords that don't meet requirements."""
         import json
-        
+
         weak_passwords = [
             ("short1!", "too short"),
             ("lowercase123!", "no uppercase"),
@@ -180,7 +181,7 @@ class TestRegistrationPasswordValidation:
             ("NoNumbers!@#Pass", "no number"),
             ("NoSpecialChar123", "no special char"),
         ]
-        
+
         for password, reason in weak_passwords:
             payload = {
                 "organization_name": "Test Org",
@@ -188,34 +189,32 @@ class TestRegistrationPasswordValidation:
                 "password": password,
                 "password_confirm": password,
             }
-            
+
             response = client.post(
-                "/api/auth/register/",
-                data=json.dumps(payload),
-                content_type="application/json"
+                "/api/auth/register/", data=json.dumps(payload), content_type="application/json"
             )
-            
-            assert response.status_code == 400, f"Password '{password}' ({reason}) should be rejected"
+
+            assert (
+                response.status_code == 400
+            ), f"Password '{password}' ({reason}) should be rejected"
             errors = response.json().get("errors", {})
             assert "password" in errors, f"Should have password error for {reason}"
 
     def test_registration_accepts_strong_password(self, client):
         """Test that registration accepts passwords meeting all requirements."""
         import json
-        
+
         payload = {
             "organization_name": "Secure Corp",
             "email": "secure@example.com",
             "password": "SecureP@ssw0rd123",
             "password_confirm": "SecureP@ssw0rd123",
         }
-        
+
         response = client.post(
-            "/api/auth/register/",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/api/auth/register/", data=json.dumps(payload), content_type="application/json"
         )
-        
+
         assert response.status_code == 201
         body = response.json()
         assert "successful" in body["detail"].lower()
@@ -223,42 +222,43 @@ class TestRegistrationPasswordValidation:
     def test_registration_provides_clear_error_messages(self, client):
         """Test that password validation errors are user-friendly."""
         import json
-        
+
         payload = {
             "organization_name": "Test Org",
             "email": "test@example.com",
             "password": "short",  # Too short, no uppercase, no number, no special char
             "password_confirm": "short",
         }
-        
+
         response = client.post(
-            "/api/auth/register/",
-            data=json.dumps(payload),
-            content_type="application/json"
+            "/api/auth/register/", data=json.dumps(payload), content_type="application/json"
         )
-        
+
         assert response.status_code == 400
         errors = response.json().get("errors", {})
         assert "password" in errors
-        
+
         # Error message should explain what's wrong
         password_errors = errors["password"]
         if isinstance(password_errors, list):
             password_errors = " ".join(password_errors)
-        
+
         # Should mention at least one requirement
         error_lower = password_errors.lower()
-        assert any(word in error_lower for word in ["character", "uppercase", "lowercase", "number", "special"])
+        assert any(
+            word in error_lower
+            for word in ["character", "uppercase", "lowercase", "number", "special"]
+        )
 
     def test_common_passwords_are_rejected(self, client):
         """Test that common/weak passwords are rejected."""
         import json
-        
+
         common_passwords = [
             "Password123!",  # Too common
-            "Welcome123!",   # Too common
+            "Welcome123!",  # Too common
         ]
-        
+
         for password in common_passwords:
             payload = {
                 "organization_name": "Test Org",
@@ -266,13 +266,11 @@ class TestRegistrationPasswordValidation:
                 "password": password,
                 "password_confirm": password,
             }
-            
+
             response = client.post(
-                "/api/auth/register/",
-                data=json.dumps(payload),
-                content_type="application/json"
+                "/api/auth/register/", data=json.dumps(payload), content_type="application/json"
             )
-            
+
             # May be rejected by CommonPasswordValidator
             # If accepted, it's because the password is not in Django's common password list
             # Either way, our custom validators still apply

@@ -18,7 +18,6 @@ def main() -> None:
 
     from django.contrib.auth import get_user_model
     from django_tenants.utils import schema_context
-
     from tenants.models import Client, Domain
 
     User = get_user_model()
@@ -53,9 +52,7 @@ def main() -> None:
         if owners:
             print("Owner group members:")
             for owner in owners:
-                print(
-                    f"  - id={owner['id']} email={owner['email']} joined={owner['date_joined']}"
-                )
+                print(f"  - id={owner['id']} email={owner['email']} joined={owner['date_joined']}")
         else:
             print("Owner group members: none")
     print("=" * 72)

@@ -2,11 +2,12 @@ import pytest
 from django.contrib.auth import get_user_model
 from django_tenants.utils import schema_context
 
+
 @pytest.mark.django_db
 def test_user_crud():
     """Test user CRUD operations in tenant schema."""
     User = get_user_model()
-    with schema_context('test_tenant'):
+    with schema_context("test_tenant"):
         u = User.objects.create_user(
             username="alice",
             email="alice@example.com",

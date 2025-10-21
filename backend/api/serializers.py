@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 import logging
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.utils.text import slugify
-from django_tenants.utils import schema_context, get_public_schema_name
+from django_tenants.utils import get_public_schema_name, schema_context
 from rest_framework import serializers
-
 from tenants.models import Client, Domain
-from api.exceptions import (
-    TenantCreationError,
-    DuplicateEmailError,
-    SchemaConflictError,
-)
+
+from api.exceptions import DuplicateEmailError, SchemaConflictError, TenantCreationError
+from api.performance_log import log_performance
 
 logger = logging.getLogger(__name__)
 
@@ -23,22 +21,23 @@ logger = logging.getLogger(__name__)
 class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for authenticated user information.
-    
+
     Returns core user fields and group memberships.
     """
+
     groups = serializers.SerializerMethodField()
 
     class Meta:
         model = get_user_model()
         fields = [
-            'id',
-            'username',
-            'email',
-            'first_name',
-            'last_name',
-            'is_staff',
-            'date_joined',
-            'groups',
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "is_staff",
+            "date_joined",
+            "groups",
         ]
         read_only_fields = fields
 
@@ -66,7 +65,7 @@ class RegistrationSerializer(serializers.Serializer):
     def validate_password(self, value: str) -> str:
         """
         Validate password against Django's password validators.
-        
+
         This includes our custom validators:
         - Minimum 12 characters
         - At least one uppercase letter
@@ -87,6 +86,7 @@ class RegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError({"password_confirm": "Passwords do not match."})
         return attrs
 
+    @log_performance(threshold_ms=2000)  # Warn if registration takes > 2 seconds
     def create(self, validated_data: dict) -> dict:
         organization_name: str = validated_data["organization_name"].strip()
         email: str = validated_data["email"].lower()
@@ -146,7 +146,7 @@ class RegistrationSerializer(serializers.Serializer):
             # Database constraint violation (e.g., duplicate email in tenant)
             logger.warning(
                 f"IntegrityError during registration for {email}: {str(e)}",
-                extra={'email': email, 'organization_name': organization_name}
+                extra={"email": email, "organization_name": organization_name},
             )
             if schema_created and tenant is not None:
                 try:
@@ -154,20 +154,18 @@ class RegistrationSerializer(serializers.Serializer):
                 except Exception:
                     logger.exception(
                         "Failed to clean up tenant after IntegrityError",
-                        extra={'email': email, 'schema_name': getattr(tenant, 'schema_name', None)},
+                        extra={"email": email, "schema_name": getattr(tenant, "schema_name", None)},
                     )
-            if 'email' in str(e).lower() or 'username' in str(e).lower():
-                raise DuplicateEmailError(
-                    "This email address is already registered."
-                )
+            if "email" in str(e).lower() or "username" in str(e).lower():
+                raise DuplicateEmailError("This email address is already registered.")
             raise TenantCreationError()
-        
+
         except Exception as e:
             # Any other error during tenant creation
             logger.error(
                 f"Unexpected error during registration for {email}: {str(e)}",
                 exc_info=True,
-                extra={'email': email, 'organization_name': organization_name}
+                extra={"email": email, "organization_name": organization_name},
             )
             if schema_created and tenant is not None:
                 try:
@@ -175,7 +173,7 @@ class RegistrationSerializer(serializers.Serializer):
                 except Exception:
                     logger.exception(
                         "Failed to clean up tenant after unexpected error",
-                        extra={'email': email, 'schema_name': getattr(tenant, 'schema_name', None)},
+                        extra={"email": email, "schema_name": getattr(tenant, "schema_name", None)},
                     )
             raise TenantCreationError()
 
@@ -206,7 +204,7 @@ class RegistrationSerializer(serializers.Serializer):
         except IntegrityError as e:
             logger.error(
                 f"Failed to create domain {domain} for tenant {schema_name}: {str(e)}",
-                exc_info=True
+                exc_info=True,
             )
             raise SchemaConflictError(
                 "Failed to configure organization domain. Please try a different name."
@@ -231,25 +229,25 @@ class RegistrationSerializer(serializers.Serializer):
 
                     # Create user profile with email verification token
                     from .models import UserProfile
+
                     profile = UserProfile.objects.create(
-                        user=user,
-                        email_verified=False,
-                        email_verification_sent_at=timezone.now()
+                        user=user, email_verified=False, email_verification_sent_at=timezone.now()
                     )
 
                     # Send verification email
                     from .utils import send_verification_email
+
                     send_verification_email(user, profile.email_verification_token)
 
                     logger.info(
                         f"Created user profile and sent verification email to {email}",
-                        extra={'email': email, 'schema_name': schema_name}
+                        extra={"email": email, "schema_name": schema_name},
                     )
 
         except IntegrityError as e:
             logger.error(
                 f"Failed to create owner user {email} in schema {schema_name}: {str(e)}",
-                exc_info=True
+                exc_info=True,
             )
             # This will be caught by the outer exception handler
             raise

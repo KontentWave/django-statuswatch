@@ -16,6 +16,6 @@ urlpatterns = [
     path("auth/me/", CurrentUserView.as_view(), name="api-current-user"),
     path("auth/verify-email/<uuid:token>/", verify_email, name="verify-email"),
     path("auth/resend-verification/", resend_verification_email, name="resend-verification"),
-    path('secure-ping/', SecurePingView.as_view(), name='api-secure-ping'),
+    path("secure-ping/", SecurePingView.as_view(), name="api-secure-ping"),
     path("ping/", PingView.as_view(), name="api-ping"),
 ]

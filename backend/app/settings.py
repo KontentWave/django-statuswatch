@@ -2,9 +2,9 @@
 Django settings for app project (Django 5 + DRF + Celery + django-tenants).
 """
 
-from pathlib import Path
 from collections import OrderedDict
 from datetime import timedelta
+from pathlib import Path
 
 import environ
 
@@ -42,21 +42,21 @@ if SECRET_KEY.startswith("django-insecure"):
         )
 
 # include wildcard for tenant subdomains like acme.django-01.local
-ALLOWED_HOSTS = ["localhost","127.0.0.1",".localhost","django-01.local","acme.django-01.local"]
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", ".localhost", "django-01.local", "acme.django-01.local"]
 
 # -------------------------------------------------------------------
 # django-tenants
 # -------------------------------------------------------------------
-TENANT_MODEL = "tenants.Client"   # app_label.ModelName
+TENANT_MODEL = "tenants.Client"  # app_label.ModelName
 DOMAIN_MODEL = "tenants.Domain"
 
 SHARED_APPS = (
-    "django_tenants",                 # must be first
-    "django.contrib.contenttypes",    # required by tenants
+    "django_tenants",  # must be first
+    "django.contrib.contenttypes",  # required by tenants
     "django.contrib.staticfiles",
     "rest_framework",
-    "corsheaders",                    # CORS support
-    "tenants",                        # your tenants app (Client/Domain models)
+    "corsheaders",  # CORS support
+    "tenants",  # your tenants app (Client/Domain models)
 )
 
 TENANT_APPS = (
@@ -108,9 +108,7 @@ WSGI_APPLICATION = "app.wsgi.application"
 # -------------------------------------------------------------------
 # Database (Postgres via DATABASE_URL)
 # -------------------------------------------------------------------
-DATABASES = {
-    "default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
-}
+DATABASES = {"default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}")}
 
 # If using Postgres, switch to the django-tenants backend
 if DATABASES["default"]["ENGINE"] in (
@@ -198,8 +196,6 @@ STRIPE_PUBLIC_KEY = env("STRIPE_PUBLIC_KEY", default="")
 STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
 
 
-
-
 # === TENANTS / JWT / CORS (canonical tail) ===
 
 TENANT_MODEL = "tenants.Client"
@@ -228,7 +224,7 @@ TENANT_APPS = [
 INSTALLED_APPS = list(OrderedDict.fromkeys(SHARED_APPS + TENANT_APPS))
 DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
 
-TENANT_URLCONF = "app.urls_tenant"           # <-- the file that has admin/
+TENANT_URLCONF = "app.urls_tenant"  # <-- the file that has admin/
 PUBLIC_SCHEMA_URLCONF = "app.urls_public"
 ROOT_URLCONF = "app.urls_tenant"
 
@@ -237,6 +233,8 @@ MIDDLEWARE = [
     "app.middleware.SecurityHeadersMiddleware",  # P1-03: Additional security headers
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django_tenants.middleware.main.TenantMainMiddleware",
+    "app.middleware_logging.RequestIDMiddleware",  # Add unique request ID
+    "app.middleware_logging.RequestLoggingMiddleware",  # Log all requests/responses
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -263,19 +261,22 @@ try:
 except Exception:
     pass
 
-REST_FRAMEWORK = {**globals().get("REST_FRAMEWORK", {}),
+REST_FRAMEWORK = {
+    **globals().get("REST_FRAMEWORK", {}),
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ),
     "EXCEPTION_HANDLER": "api.exception_handler.custom_exception_handler",
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 50,
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "100/hour",           # General anonymous users
-        "user": "1000/hour",          # Authenticated users
-        "registration": "5/hour",     # Registration endpoint (strict)
-        "login": "10/hour",           # Login endpoint (prevent brute-force)
-        "burst": "20/min",            # Burst protection (short-term)
-        "sustained": "100/day",       # Long-term protection
+        "anon": "100/hour",  # General anonymous users
+        "user": "1000/hour",  # Authenticated users
+        "registration": "5/hour",  # Registration endpoint (strict)
+        "login": "10/hour",  # Login endpoint (prevent brute-force)
+        "burst": "20/min",  # Burst protection (short-term)
+        "sustained": "100/day",  # Long-term protection
     },
 }
 # -------------------------------------------------------------------
@@ -284,29 +285,23 @@ REST_FRAMEWORK = {**globals().get("REST_FRAMEWORK", {}),
 SIMPLE_JWT = {
     # Token Lifetimes
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),  # Short-lived access tokens
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),     # Longer-lived refresh tokens
-    
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),  # Longer-lived refresh tokens
     # Token Rotation
-    "ROTATE_REFRESH_TOKENS": True,   # Issue new refresh token on refresh
-    "BLACKLIST_AFTER_ROTATION": True, # Blacklist old refresh token
-    
+    "ROTATE_REFRESH_TOKENS": True,  # Issue new refresh token on refresh
+    "BLACKLIST_AFTER_ROTATION": True,  # Blacklist old refresh token
     # Security
-    "UPDATE_LAST_LOGIN": True,       # Update user's last_login on token generation
-    
+    "UPDATE_LAST_LOGIN": True,  # Update user's last_login on token generation
     # Token Claims
     "AUTH_HEADER_TYPES": ("Bearer",),
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
-    
     # Algorithms
     "ALGORITHM": "HS256",
     "SIGNING_KEY": SECRET_KEY,
     "VERIFYING_KEY": None,
-    
     # Token Classes
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
     "TOKEN_TYPE_CLAIM": "token_type",
-    
     # Sliding Tokens (disabled, we use access/refresh pair)
     "SLIDING_TOKEN_REFRESH_EXP_CLAIM": "refresh_exp",
     "SLIDING_TOKEN_LIFETIME": timedelta(minutes=5),
@@ -320,9 +315,9 @@ CORS_ALLOWED_ORIGINS = env.list(
     default=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "https://localhost:5173",   # Vite with HTTPS
-        "https://localhost:8443",   # OpenResty/Nginx proxy
-    ]
+        "https://localhost:5173",  # Vite with HTTPS
+        "https://localhost:8443",  # OpenResty/Nginx proxy
+    ],
 )
 CORS_ALLOW_CREDENTIALS = True  # Allow cookies/auth headers
 CORS_ALLOW_HEADERS = [
@@ -343,7 +338,7 @@ CSRF_TRUSTED_ORIGINS = env.list(
         "https://*.django-01.local",
         "https://statuswatch.local",
         "https://*.statuswatch.local",
-    ]
+    ],
 )
 
 # -------------------------------------------------------------------
@@ -351,7 +346,7 @@ CSRF_TRUSTED_ORIGINS = env.list(
 # -------------------------------------------------------------------
 # Trust X-Forwarded-Proto header from reverse proxies (nginx, AWS ALB, etc.)
 USE_X_FORWARDED_HOST = True
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # HTTPS Redirect - enabled in production only
 # In development, the reverse proxy handles HTTPS termination
@@ -361,9 +356,15 @@ SECURE_SSL_REDIRECT = ENFORCE_HTTPS
 # HTTP Strict Transport Security (HSTS)
 # Tells browsers to only access the site via HTTPS
 if ENFORCE_HTTPS:
-    SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=3600)  # 1 hour for testing, increase gradually
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", default=True)  # Apply to all subdomains (important for multi-tenant)
-    SECURE_HSTS_PRELOAD = env.bool("SECURE_HSTS_PRELOAD", default=False)  # Set True only when using long HSTS duration
+    SECURE_HSTS_SECONDS = env.int(
+        "SECURE_HSTS_SECONDS", default=3600
+    )  # 1 hour for testing, increase gradually
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool(
+        "SECURE_HSTS_INCLUDE_SUBDOMAINS", default=True
+    )  # Apply to all subdomains (important for multi-tenant)
+    SECURE_HSTS_PRELOAD = env.bool(
+        "SECURE_HSTS_PRELOAD", default=False
+    )  # Set True only when using long HSTS duration
 else:
     SECURE_HSTS_SECONDS = 0
     SECURE_HSTS_INCLUDE_SUBDOMAINS = False
@@ -375,9 +376,11 @@ CSRF_COOKIE_SECURE = ENFORCE_HTTPS
 
 # Additional cookie security settings
 SESSION_COOKIE_HTTPONLY = True  # Prevent JavaScript access to session cookie
-CSRF_COOKIE_HTTPONLY = True     # Prevent JavaScript access to CSRF cookie
-SESSION_COOKIE_SAMESITE = 'Lax'  # CSRF protection: Lax allows navigation, Strict blocks all cross-site
-CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_HTTPONLY = True  # Prevent JavaScript access to CSRF cookie
+SESSION_COOKIE_SAMESITE = (
+    "Lax"  # CSRF protection: Lax allows navigation, Strict blocks all cross-site
+)
+CSRF_COOKIE_SAMESITE = "Lax"
 
 # -------------------------------------------------------------------
 # Security Headers (P1-03)
@@ -385,8 +388,8 @@ CSRF_COOKIE_SAMESITE = 'Lax'
 # X-Frame-Options: Prevent clickjacking attacks
 # DENY = cannot be displayed in frame/iframe at all
 # SAMEORIGIN = can only be displayed in frame on same origin
-SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
-X_FRAME_OPTIONS = 'DENY'  # Most secure: prevents all framing
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"  # Most secure: prevents all framing
 
 # X-Content-Type-Options: Prevent MIME type sniffing
 # Browsers must respect the declared Content-Type
@@ -395,20 +398,20 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 # Referrer-Policy: Control referrer information sent to other sites
 # 'same-origin' = only send referrer for same-origin requests
 # 'strict-origin-when-cross-origin' = send origin only for cross-origin HTTPS
-SECURE_REFERRER_POLICY = 'same-origin'
+SECURE_REFERRER_POLICY = "same-origin"
 
 # Permissions-Policy (formerly Feature-Policy)
 # Control which browser features can be used
 # Disable potentially risky features like geolocation, camera, microphone
 PERMISSIONS_POLICY = {
-    'geolocation': [],        # No sites can access geolocation
-    'camera': [],             # No sites can access camera
-    'microphone': [],         # No sites can access microphone
-    'payment': [],            # No sites can use Payment Request API (we use Stripe redirect)
-    'usb': [],                # No USB device access
-    'magnetometer': [],       # No magnetometer access
-    'accelerometer': [],      # No accelerometer access
-    'gyroscope': [],          # No gyroscope access
+    "geolocation": [],  # No sites can access geolocation
+    "camera": [],  # No sites can access camera
+    "microphone": [],  # No sites can access microphone
+    "payment": [],  # No sites can use Payment Request API (we use Stripe redirect)
+    "usb": [],  # No USB device access
+    "magnetometer": [],  # No magnetometer access
+    "accelerometer": [],  # No accelerometer access
+    "gyroscope": [],  # No gyroscope access
 }
 
 # Content Security Policy (CSP) - Prevent XSS attacks
@@ -418,7 +421,10 @@ PERMISSIONS_POLICY = {
 if ENFORCE_HTTPS:
     # Strict CSP for production
     CSP_DEFAULT_SRC = ("'self'",)
-    CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'")  # TODO: Remove unsafe-inline when frontend uses nonces
+    CSP_SCRIPT_SRC = (
+        "'self'",
+        "'unsafe-inline'",
+    )  # TODO: Remove unsafe-inline when frontend uses nonces
     CSP_STYLE_SRC = ("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")
     CSP_FONT_SRC = ("'self'", "https://fonts.gstatic.com")
     CSP_IMG_SRC = ("'self'", "data:", "https:")
@@ -440,103 +446,142 @@ else:
 # Logging Configuration
 # -------------------------------------------------------------------
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '[{levelname}] {asctime} {name} {module}.{funcName}:{lineno} - {message}',
-            'style': '{',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[{levelname}] {asctime} {name} {module}.{funcName}:{lineno} - {message}",
+            "style": "{",
         },
-        'simple': {
-            'format': '[{levelname}] {message}',
-            'style': '{',
-        },
-    },
-    'filters': {
-        'require_debug_false': {
-            '()': 'django.utils.log.RequireDebugFalse',
-        },
-        'require_debug_true': {
-            '()': 'django.utils.log.RequireDebugTrue',
+        "simple": {
+            "format": "[{levelname}] {message}",
+            "style": "{",
         },
     },
-    'handlers': {
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
+    "filters": {
+        "require_debug_false": {
+            "()": "django.utils.log.RequireDebugFalse",
         },
-        'console_debug': {
-            'level': 'DEBUG',
-            'filters': ['require_debug_true'],
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
-        },
-        'file_app': {
-            'level': 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOG_DIR / 'statuswatch.log',
-            'maxBytes': 1024 * 1024 * 10,
-            'backupCount': 5,
-            'formatter': 'verbose',
-        },
-        'file_error': {
-            'level': 'ERROR',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOG_DIR / 'error.log',
-            'maxBytes': 1024 * 1024 * 10,  # 10 MB
-            'backupCount': 5,
-            'formatter': 'verbose',
-        },
-        'file_security': {
-            'level': 'WARNING',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOG_DIR / 'security.log',
-            'maxBytes': 1024 * 1024 * 10,  # 10 MB
-            'backupCount': 5,
-            'formatter': 'verbose',
+        "require_debug_true": {
+            "()": "django.utils.log.RequireDebugTrue",
         },
     },
-    'loggers': {
-        'django': {
-            'handlers': ['console', 'file_app', 'file_error'],
-            'level': 'INFO',
-            'propagate': False,
+    "handlers": {
+        "console": {
+            "level": "INFO",
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
         },
-        'django.security': {
-            'handlers': ['file_security', 'console'],
-            'level': 'WARNING',
-            'propagate': False,
+        "console_debug": {
+            "level": "DEBUG",
+            "filters": ["require_debug_true"],
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
         },
-        'django.request': {
-            'handlers': ['file_app', 'file_error', 'console'],
-            'level': 'ERROR',
-            'propagate': False,
+        "file_app": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "statuswatch.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
         },
-        'api': {
-            'handlers': ['console', 'file_app'],
-            'level': 'INFO',
-            'propagate': False,
+        "file_error": {
+            "level": "ERROR",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "error.log",
+            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "backupCount": 5,
+            "formatter": "verbose",
         },
-        'tenants': {
-            'handlers': ['console', 'file_app'],
-            'level': 'INFO',
-            'propagate': False,
+        "file_security": {
+            "level": "WARNING",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "security.log",
+            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "backupCount": 5,
+            "formatter": "verbose",
         },
-        'payments': {
-            'handlers': ['console', 'file_app'],
-            'level': 'INFO',
-            'propagate': False,
+        "file_request": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "request.log",
+            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "backupCount": 5,
+            "formatter": "verbose",
         },
-        'api.auth': {
-            'handlers': ['console', 'file_app', 'file_security'],
-            'level': 'INFO',
-            'propagate': False,
+        "file_audit": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "audit.log",
+            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
+        "file_performance": {
+            "level": "WARNING",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "performance.log",
+            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "backupCount": 5,
+            "formatter": "verbose",
         },
     },
-    'root': {
-        'handlers': ['console', 'file_app'],
-        'level': 'INFO',
+    "loggers": {
+        "django": {
+            "handlers": ["console", "file_app", "file_error"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "django.security": {
+            "handlers": ["file_security", "console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["file_app", "file_error", "console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+        "api": {
+            "handlers": ["console", "file_app"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "tenants": {
+            "handlers": ["console", "file_app"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments": {
+            "handlers": ["console", "file_app"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "api.auth": {
+            "handlers": ["console", "file_app", "file_security"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "api.request": {
+            "handlers": ["file_request"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "api.audit": {
+            "handlers": ["file_audit", "console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "api.performance": {
+            "handlers": ["file_performance", "console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+    "root": {
+        "handlers": ["console", "file_app"],
+        "level": "INFO",
     },
 }
 
@@ -545,10 +590,7 @@ LOGGING = {
 # -------------------------------------------------------------------
 # For MVP/development: console backend logs emails to terminal
 # For production: switch to SMTP backend (SendGrid, Mailgun, AWS SES, etc.)
-EMAIL_BACKEND = env(
-    "EMAIL_BACKEND",
-    default="django.core.mail.backends.console.EmailBackend"
-)
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
 
 # SMTP settings (used when EMAIL_BACKEND is set to SMTP)
 EMAIL_HOST = env("EMAIL_HOST", default="localhost")
@@ -558,10 +600,7 @@ EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 
 # Email addresses
-DEFAULT_FROM_EMAIL = env(
-    "DEFAULT_FROM_EMAIL",
-    default="noreply@statuswatch.local"
-)
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@statuswatch.local")
 SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 
 # Frontend URL for email links (verification, password reset, etc.)
