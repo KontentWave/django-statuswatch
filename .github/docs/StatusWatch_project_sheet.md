@@ -80,3 +80,42 @@ Here is a detailed breakdown of the features for your MVP. Each feature includes
   - Logging sanitization strips secrets from auth and payment events, ensuring rotation-friendly logs (`statuswatch.log`, `security.log`).
 
 ---
+
+### 3. Core Feature: Endpoint Monitoring (CRUD)
+
+- **Action:** Allow an authenticated user to create, view, and delete the URLs they want to monitor within their organization's dashboard.
+- **Test Plan:**
+  - Backend: Test that CRUD operations on endpoints are properly authenticated and scoped to the user's tenant.
+  - Frontend: Test that the dashboard correctly displays the list of endpoints and that the create/delete actions update the UI.
+
+#### **Frontend Tasks (React)**
+
+- Create a protected route and view for `/dashboard`.
+- Use **TanStack Query**'s `useQuery` hook to fetch the list of endpoints from the back-end API.
+- Display the endpoints in a clean table using **TanStack Table**. Show the URL and the latest status.
+- Build a "Create Endpoint" form (e.g., in a modal from **shadcn/ui**).
+- Use **TanStack Query**'s `useMutation` hook to handle the `POST` request for creating a new endpoint. On success, automatically invalidate the endpoint list query to refetch the latest data.
+- Add a "Delete" button to each row that triggers another `useMutation` to send a `DELETE` request.
+
+#### **Backend Tasks (Django)**
+
+- Create an `Endpoint` model within one of your apps. It should have a foreign key to the `Tenant` model to ensure it's tenant-specific.
+- Create a Celery task `ping_endpoint(endpoint_id)` that performs the check and saves the result.
+- Create a DRF `ModelViewSet` for the `Endpoint` model.
+  - This provides `/api/endpoints/` with `GET`, `POST`, `PUT`, `DELETE` functionality out of the box.
+  - **Crucially**, override the `get_queryset` method to filter by the current request's tenant: `Endpoint.objects.filter(tenant=request.tenant)`. This is the core of data isolation.
+  - On creating a new `Endpoint` instance, trigger the initial Celery task.
+
+#### **Implementation Notes**
+
+- **Frontend**
+  - `/dashboard` is nested beneath the authenticated TanStack Router branch (`frontend/src/app/router.tsx`) and renders `DashboardPage`.
+  - `DashboardPage` (`frontend/src/pages/Dashboard.tsx`) fetches `/api/endpoints/` with `useQuery`, keeps previous data during pagination, and hands rows to `EndpointTable`.
+  - `EndpointTable` (`frontend/src/components/EndpointTable.tsx`) builds the grid with TanStack Table, supplies stable row IDs, and exposes Prev/Next controls that call the parent `onPageChange` handler.
+  - The inline “Add Endpoint” form posts through a `useMutation` hook that invalidates the endpoints query; delete buttons call a separate mutation and keep pagination state consistent.
+  - Vitest coverage (`frontend/src/pages/__tests__/DashboardPage.test.tsx`) asserts list rendering, pagination logging, create/delete flows, auth guard redirects, and logout handling.
+- **Backend**
+  - `Endpoint` model (`backend/monitors/models.py`) associates monitors with tenants, tracks schedule metadata, and enforces per-tenant URL uniqueness.
+  - `EndpointViewSet` (`backend/monitors/views.py`) scopes queries to `request.tenant`, logs create/delete events, schedules an immediate Celery ping, and exposes routes at `/api/endpoints/`.
+  - Celery jobs (`backend/monitors/tasks.py`) implement `ping_endpoint` with retries and `schedule_endpoint_checks` to enqueue due monitors across tenant schemas.
+  - Django tests (`backend/monitors/tests/test_endpoints_api.py`, `backend/monitors/tests/test_scheduler.py`) validate auth requirements, tenant isolation, create/delete behavior, and scheduler enqueue logic with captured task calls.

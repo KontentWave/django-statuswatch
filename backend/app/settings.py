@@ -67,6 +67,7 @@ TENANT_APPS = (
     "rest_framework_simplejwt.token_blacklist",  # Per-tenant JWT blacklist tables
     # your tenant-facing apps:
     "api",
+    "monitors",
 )
 
 # Final INSTALLED_APPS: shared first, then tenant apps (no duplicates)
@@ -188,6 +189,12 @@ CELERY_TASK_ALWAYS_EAGER = False
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
+CELERY_BEAT_SCHEDULE = {
+    "monitors.schedule_endpoint_checks": {
+        "task": "monitors.tasks.schedule_endpoint_checks",
+        "schedule": timedelta(minutes=1),
+    }
+}
 
 # -------------------------------------------------------------------
 # Payments / Stripe (test mode)
@@ -220,6 +227,7 @@ TENANT_APPS = [
     "rest_framework_simplejwt.token_blacklist",  # Per-tenant JWT blacklist tables
     "api",
     "payments",
+    "monitors",
 ]
 INSTALLED_APPS = list(OrderedDict.fromkeys(SHARED_APPS + TENANT_APPS))
 DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
@@ -465,6 +473,10 @@ LOGGING = {
         "require_debug_true": {
             "()": "django.utils.log.RequireDebugTrue",
         },
+        "max_warning": {
+            "()": "app.logging_filters.MaxLevelFilter",
+            "level": "WARNING",
+        },
     },
     "handlers": {
         "console": {
@@ -485,6 +497,7 @@ LOGGING = {
             "maxBytes": 1024 * 1024 * 10,
             "backupCount": 5,
             "formatter": "verbose",
+            "filters": ["max_warning"],
         },
         "file_error": {
             "level": "ERROR",
@@ -519,7 +532,7 @@ LOGGING = {
             "formatter": "verbose",
         },
         "file_performance": {
-            "level": "WARNING",
+            "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "performance.log",
             "maxBytes": 1024 * 1024 * 10,  # 10 MB
@@ -576,6 +589,21 @@ LOGGING = {
         "api.performance": {
             "handlers": ["file_performance", "console"],
             "level": "WARNING",
+            "propagate": False,
+        },
+        "monitors": {
+            "handlers": ["console", "file_app"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "monitors.audit": {
+            "handlers": ["file_audit", "console"],
+            "level": "DEBUG" if DEBUG else "INFO",
+            "propagate": False,
+        },
+        "monitors.performance": {
+            "handlers": ["file_performance", "console"],
+            "level": "INFO",
             "propagate": False,
         },
     },

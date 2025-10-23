@@ -5,7 +5,9 @@ This conftest.py provides shared fixtures and patches that apply to all tests
 in the test suite, ensuring proper handling of multi-tenant database operations.
 """
 
+import logging
 import re
+import uuid
 
 import pytest
 from django.db import connection
@@ -32,10 +34,12 @@ def _execute_sql_flush_with_cascade(sql_list, *args, **kwargs):
 
     cascaded_sql_list = []
     for sql in sql_list:
-        if sql.strip().upper().startswith("TRUNCATE"):
-            # Add CASCADE before the final semicolon
-            cascaded_sql = re.sub(r";\s*$", " CASCADE;", sql.strip())
-            cascaded_sql_list.append(cascaded_sql)
+        stripped_sql = sql.strip()
+        if stripped_sql.upper().startswith("TRUNCATE"):
+            # Avoid appending CASCADE twice if already present.
+            if "CASCADE" not in stripped_sql.upper():
+                stripped_sql = re.sub(r";\s*$", " CASCADE;", stripped_sql)
+            cascaded_sql_list.append(stripped_sql)
         else:
             cascaded_sql_list.append(sql)
 
@@ -189,3 +193,60 @@ def reset_schema_between_tests(db, ensure_test_tenant):
     yield
     # Return to public schema for next test
     connection.set_schema_to_public()
+
+
+@pytest.fixture
+def tenant_factory(db):
+    """Create disposable tenants for tests that need isolated schemas."""
+
+    created: list[Client] = []
+
+    def _create(name: str = "Test Tenant") -> Client:
+        schema_name = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}"
+        tenant = Client(
+            schema_name=schema_name,
+            name=name,
+            paid_until="2099-12-31",
+            on_trial=False,
+        )
+        tenant.save()
+
+        Domain.objects.create(
+            tenant=tenant,
+            domain=f"{schema_name}.localhost",
+            is_primary=True,
+        )
+
+        created.append(tenant)
+        return tenant
+
+    yield _create
+
+    connection.set_schema_to_public()
+    for tenant in created:
+        try:
+            tenant.delete()
+        except Exception:
+            # If the tenant cleanup fails we ignore it to keep tests resilient.
+            pass
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Log failing test details to the Django error logger for debugging."""
+
+    outcome = yield
+    report = outcome.get_result()
+
+    if not report.failed:
+        return
+
+    logger = logging.getLogger("django")
+    longrepr = getattr(report, "longreprtext", None)
+    detail = longrepr if isinstance(longrepr, str) else str(report.longrepr)
+    logger.error(
+        "Pytest failure | phase=%s | nodeid=%s\n%s",
+        report.when,
+        report.nodeid,
+        detail,
+    )

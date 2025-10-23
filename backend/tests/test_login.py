@@ -14,7 +14,39 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.utils.text import slugify
 from django_tenants.utils import schema_context
+from psycopg import sql
 from tenants.models import Client, Domain
+
+
+def _drop_tenant_schema_and_metadata(schema_name: str, tenant_id: int) -> None:
+    """Drop tenant schema and remove tenant/domain rows without hitting related tenant tables."""
+    connection.set_schema_to_public()
+
+    if connection.vendor != "postgresql":
+        # Fallback for non-Postgres test environments where django-tenants schemas are unsupported.
+        Client.objects.filter(id=tenant_id).delete()
+        return
+
+    # Directly manipulate schema + metadata to avoid cascades querying tenant tables that may be absent.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema_name))
+        )
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("DELETE FROM {} WHERE tenant_id = %s").format(
+                sql.Identifier(Domain._meta.db_table)
+            ),
+            [tenant_id],
+        )
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("DELETE FROM {} WHERE id = %s").format(sql.Identifier(Client._meta.db_table)),
+            [tenant_id],
+        )
+
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -28,7 +60,13 @@ def stark_industries_tenant(db):
 
     # Ensure we're operating on the public schema before mutating tenant metadata
     connection.set_schema_to_public()
-    Client.objects.filter(schema_name__startswith="stark-industries").delete()
+    existing_tenants = list(
+        Client.objects.filter(schema_name__startswith="stark-industries").values_list(
+            "schema_name", "id"
+        )
+    )
+    for existing_schema, existing_id in existing_tenants:
+        _drop_tenant_schema_and_metadata(existing_schema, existing_id)
 
     # Create tenant with unique schema/domain per test to avoid collisions
     unique_suffix = uuid.uuid4().hex[:8]
@@ -78,7 +116,9 @@ def stark_industries_tenant(db):
         OutstandingToken.objects.all().delete()
 
     connection.set_schema_to_public()
-    tenant.delete(force_drop=True)
+
+    # Drop schema and metadata without triggering ORM cascades into tenant-specific tables.
+    _drop_tenant_schema_and_metadata(schema_name, tenant.id)
 
 
 def _post_json(client, url, payload, http_host="testserver"):
