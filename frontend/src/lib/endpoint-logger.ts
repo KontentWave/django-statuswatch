@@ -7,7 +7,7 @@ interface EndpointLogger {
   write(entry: EndpointLogEntry): Promise<void>;
 }
 
-export interface EndpointLogEntry {
+type EndpointLogEntryBase = {
   timestamp: string;
   action: EndpointAction;
   phase: EndpointPhase;
@@ -18,8 +18,12 @@ export interface EndpointLogEntry {
   errorName?: string;
   errorMessage?: string;
   payload?: unknown;
-  [key: string]: unknown;
-}
+};
+
+export type EndpointLogEntry = EndpointLogEntryBase & Record<string, unknown>;
+
+type EndpointLogEntryInput = Omit<EndpointLogEntryBase, "timestamp"> &
+  Record<string, unknown> & { timestamp?: string };
 
 type EndpointAction = "list" | "create" | "delete";
 type EndpointPhase = "start" | "success" | "error";
@@ -49,11 +53,14 @@ export function resetEndpointLogger(): void {
 }
 
 export async function logEndpointEvent(
-  entry: Omit<EndpointLogEntry, "timestamp">
+  entry: EndpointLogEntryInput
 ): Promise<void> {
+  const { action, phase, timestamp, ...rest } = entry;
   const payload: EndpointLogEntry = {
-    timestamp: new Date().toISOString(),
-    ...entry,
+    action,
+    phase,
+    ...rest,
+    timestamp: timestamp ?? new Date().toISOString(),
   };
 
   try {

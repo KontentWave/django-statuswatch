@@ -11,6 +11,7 @@ import {
   deleteEndpoint,
   listEndpoints,
   type CreateEndpointRequest,
+  type EndpointListResponse,
 } from "@/lib/endpoint-client";
 import { logDashboardEvent } from "@/lib/dashboard-logger";
 
@@ -35,14 +36,11 @@ export default function DashboardPage() {
     queryFn: fetchCurrentUser,
     retry: false,
   });
-  const endpointsQuery = useQuery({
+  const endpointsQuery = useQuery<EndpointListResponse, Error>({
     queryKey: [ENDPOINTS_QUERY_KEY, page],
-    queryFn: async () => {
-      const result = await listEndpoints({ page });
-      return result;
-    },
+    queryFn: () => listEndpoints({ page }),
     retry: false,
-    keepPreviousData: true,
+    placeholderData: (previousData) => previousData,
   });
 
   const logoutMutation = useMutation({
@@ -130,7 +128,11 @@ export default function DashboardPage() {
     if (!endpointsQuery.isSuccess) {
       return;
     }
-    if (page > 1 && endpointsQuery.data.results.length === 0) {
+    if (
+      page > 1 &&
+      endpointsQuery.data &&
+      endpointsQuery.data.results.length === 0
+    ) {
       setPage((prev) => Math.max(1, prev - 1));
     }
   }, [endpointsQuery.data, endpointsQuery.isSuccess, page]);
@@ -192,7 +194,7 @@ export default function DashboardPage() {
   const hasNextPage = Boolean(endpointsQuery.data?.next) || page < totalPages;
   const hasPreviousPage = page > 1;
   const endpointsErrorMessage = endpointsQuery.isError
-    ? (endpointsQuery.error as Error)?.message ?? "Unable to load endpoints."
+    ? endpointsQuery.error?.message ?? "Unable to load endpoints."
     : null;
 
   const deletePendingId = deleteEndpointMutation.variables as
