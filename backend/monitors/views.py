@@ -48,8 +48,8 @@ class EndpointViewSet(viewsets.ModelViewSet):
 
         endpoint.last_enqueued_at = timezone.now()
         endpoint.save(update_fields=["last_enqueued_at", "updated_at"])
-
-        ping_endpoint.delay(str(endpoint.id))
+        tenant_schema = getattr(tenant, "schema_name", "public")
+        ping_endpoint.delay(str(endpoint.id), tenant_schema)
 
     def perform_destroy(self, instance):
         audit_logger.info(

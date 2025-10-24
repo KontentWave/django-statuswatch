@@ -19,9 +19,10 @@ from django_tenants.utils import schema_context
 def main():
     U = get_user_model()
     with schema_context("acme"):
+        email = "jwt@example.com"
         u, created = U.objects.get_or_create(
-            username="jwt",
-            defaults={"email": "jwt@example.com", "is_active": True},
+            username=email,
+            defaults={"email": email, "is_active": True},
         )
         u.set_password("JwtP@ss123456")  # Meets complexity requirements
         u.save()

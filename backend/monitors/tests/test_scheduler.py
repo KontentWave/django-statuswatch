@@ -6,7 +6,7 @@ from django.utils import timezone
 from django_tenants.utils import schema_context
 
 from ..models import Endpoint
-from ..tasks import schedule_endpoint_checks
+from ..tasks import PENDING_REQUEUE_GRACE, schedule_endpoint_checks
 
 
 @pytest.fixture(autouse=True)
@@ -49,16 +49,23 @@ def test_scheduler_enqueues_due_endpoints(tenant_factory, caplog, monkeypatch):
             last_enqueued_at=overdue,
         )
 
-    captured: list[str] = []
-    monkeypatch.setattr(
-        "monitors.tasks.ping_endpoint.delay", lambda endpoint_id: captured.append(endpoint_id)
-    )
+    captured: list[tuple[str, str]] = []
+
+    class DummyResult:
+        def __init__(self, endpoint_id: str, tenant_schema: str) -> None:
+            self.id = f"test-{tenant_schema}-{endpoint_id}"
+
+    def record_call(endpoint_id: str, tenant_schema: str) -> DummyResult:
+        captured.append((endpoint_id, tenant_schema))
+        return DummyResult(endpoint_id, tenant_schema)
+
+    monkeypatch.setattr("monitors.tasks.ping_endpoint.delay", record_call)
 
     caplog.clear()
 
     schedule_endpoint_checks()
 
-    assert captured == [str(endpoint.id)]
+    assert captured == [(str(endpoint.id), tenant.schema_name)]
 
     with schema_context(tenant.schema_name):
         endpoint.refresh_from_db()
@@ -93,11 +100,61 @@ def test_scheduler_skips_recent_endpoints(tenant_factory, monkeypatch):
             last_enqueued_at=recent,
         )
 
-    captured: list[str] = []
-    monkeypatch.setattr(
-        "monitors.tasks.ping_endpoint.delay", lambda endpoint_id: captured.append(endpoint_id)
-    )
+    captured: list[tuple[str, str]] = []
+
+    class DummyResult:
+        def __init__(self, endpoint_id: str, tenant_schema: str) -> None:
+            self.id = f"test-{tenant_schema}-{endpoint_id}"
+
+    def record_call(endpoint_id: str, tenant_schema: str) -> DummyResult:
+        captured.append((endpoint_id, tenant_schema))
+        return DummyResult(endpoint_id, tenant_schema)
+
+    monkeypatch.setattr("monitors.tasks.ping_endpoint.delay", record_call)
 
     schedule_endpoint_checks()
 
     assert captured == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_scheduler_requeues_after_pending_grace(tenant_factory, monkeypatch):
+    tenant = tenant_factory("Scheduler Grace Tenant")
+
+    overdue = timezone.now() - timedelta(minutes=10)
+    recent_enqueue = timezone.now() - timedelta(seconds=10)
+
+    with schema_context(tenant.schema_name):
+        endpoint = Endpoint.objects.create(
+            tenant=tenant,
+            name="Grace API",
+            url="https://scheduler.example.com/grace",
+            interval_minutes=5,
+            last_status="ok",
+            last_checked_at=overdue,
+            last_enqueued_at=recent_enqueue,
+        )
+
+    captured: list[tuple[str, str]] = []
+
+    class DummyResult:
+        def __init__(self, endpoint_id: str, tenant_schema: str) -> None:
+            self.id = f"test-{tenant_schema}-{endpoint_id}"
+
+    def record_call(endpoint_id: str, tenant_schema: str) -> DummyResult:
+        captured.append((endpoint_id, tenant_schema))
+        return DummyResult(endpoint_id, tenant_schema)
+
+    monkeypatch.setattr("monitors.tasks.ping_endpoint.delay", record_call)
+
+    schedule_endpoint_checks()
+
+    assert captured == []  # Still within grace window; no duplicate enqueue
+
+    with schema_context(tenant.schema_name):
+        endpoint.last_enqueued_at = timezone.now() - PENDING_REQUEUE_GRACE - timedelta(seconds=5)
+        endpoint.save(update_fields=["last_enqueued_at", "updated_at"])
+
+    schedule_endpoint_checks()
+
+    assert captured == [(str(endpoint.id), tenant.schema_name)]

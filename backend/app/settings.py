@@ -196,6 +196,9 @@ CELERY_BEAT_SCHEDULE = {
     }
 }
 
+# Grace period before re-enqueuing endpoint pings that were recently queued.
+PENDING_REQUEUE_GRACE_SECONDS = env.int("PENDING_REQUEUE_GRACE_SECONDS", default=90)
+
 # -------------------------------------------------------------------
 # Payments / Stripe (test mode)
 # -------------------------------------------------------------------

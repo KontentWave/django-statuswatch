@@ -41,6 +41,11 @@ export default function DashboardPage() {
     queryFn: () => listEndpoints({ page }),
     retry: false,
     placeholderData: (previousData) => previousData,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: "always",
+    refetchOnReconnect: true,
+    staleTime: 0,
   });
 
   const logoutMutation = useMutation({
@@ -291,6 +296,24 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground">
             Track health checks for URLs in your organization.
           </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void endpointsQuery.refetch();
+              }}
+              disabled={endpointsQuery.isFetching}
+              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {endpointsQuery.isFetching ? "Refreshing…" : "Refresh"}
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Updated{" "}
+              {endpointsQuery.dataUpdatedAt
+                ? new Date(endpointsQuery.dataUpdatedAt).toLocaleTimeString()
+                : "just now"}
+            </span>
+          </div>
         </div>
 
         <EndpointTable

@@ -68,11 +68,15 @@ def auth_client_factory():
 
 @pytest.fixture
 def capture_ping_calls(monkeypatch):
-    captured: list[str] = []
+    captured: list[tuple[str, str]] = []
 
-    def fake_delay(endpoint_id: str) -> None:
-        captured.append(endpoint_id)
-        LOGGER.info("Captured ping enqueue endpoint_id=%s", endpoint_id)
+    def fake_delay(endpoint_id: str, tenant_schema: str) -> None:
+        captured.append((endpoint_id, tenant_schema))
+        LOGGER.info(
+            "Captured ping enqueue endpoint_id=%s tenant=%s",
+            endpoint_id,
+            tenant_schema,
+        )
 
     monkeypatch.setattr("monitors.views.ping_endpoint.delay", fake_delay)
     return captured
@@ -108,7 +112,7 @@ def test_create_endpoint_triggers_ping_and_lists_result(
     _log_response("Create endpoint", response)
     assert response.status_code == 201
     endpoint_id = response.json()["id"]
-    assert capture_ping_calls == [endpoint_id]
+    assert capture_ping_calls == [(endpoint_id, tenant.schema_name)]
 
     LOGGER.info("Listing endpoints after create")
     list_response = client.get("/api/endpoints/")
@@ -162,7 +166,9 @@ def test_endpoints_are_isolated_per_tenant(tenant_factory, auth_client_factory, 
     client_a, _ = auth_client_factory(tenant_a, email="owner-a@example.com")
     client_b, _ = auth_client_factory(tenant_b, email="owner-b@example.com")
 
-    monkeypatch.setattr("monitors.views.ping_endpoint.delay", lambda endpoint_id: None)
+    monkeypatch.setattr(
+        "monitors.views.ping_endpoint.delay", lambda endpoint_id, tenant_schema: None
+    )
 
     LOGGER.info("Creating endpoint for tenant_a schema=%s", tenant_a.schema_name)
     client_a.post(

@@ -137,15 +137,37 @@ export default function EndpointTable({
       }),
       columnHelper.accessor("last_checked_at", {
         header: "Last Checked",
-        cell: ({ getValue }) => {
+        cell: ({ row, getValue }) => {
           const lastCheckedAt = getValue();
-          return (
-            <span className="text-sm text-muted-foreground">
-              {lastCheckedAt
-                ? new Date(lastCheckedAt).toLocaleString()
-                : "Never"}
-            </span>
-          );
+          const lastEnqueuedAt = row.original.last_enqueued_at;
+          const enqueuedDate = lastEnqueuedAt ? new Date(lastEnqueuedAt) : null;
+          const checkedDate = lastCheckedAt ? new Date(lastCheckedAt) : null;
+
+          if (
+            enqueuedDate &&
+            (!checkedDate || enqueuedDate.getTime() > checkedDate.getTime())
+          ) {
+            return (
+              <span className="flex flex-col text-sm text-muted-foreground">
+                <span>Queued {enqueuedDate.toLocaleTimeString()}</span>
+                {checkedDate ? (
+                  <span className="text-xs">
+                    Last {checkedDate.toLocaleString()}
+                  </span>
+                ) : null}
+              </span>
+            );
+          }
+
+          if (checkedDate) {
+            return (
+              <span className="text-sm text-muted-foreground">
+                {checkedDate.toLocaleString()}
+              </span>
+            );
+          }
+
+          return <span className="text-sm text-muted-foreground">Never</span>;
         },
         meta: {
           headerClassName: "px-4 py-3",
