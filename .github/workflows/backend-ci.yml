@@ -73,3 +73,14 @@ jobs:
           else
             exit "$ec"
           fi
+
+      - name: Check Celery tasks registration
+        run: |
+          python manage.py shell -c "
+          from app.celery import celery_app
+          tasks = [t for t in celery_app.tasks.keys() if not t.startswith('celery.')]
+          print(f'Registered tasks: {len(tasks)}')
+          for task in sorted(tasks):
+              print(f'  - {task}')
+          assert len(tasks) >= 3, f'Expected at least 3 tasks, got {len(tasks)}'
+          "

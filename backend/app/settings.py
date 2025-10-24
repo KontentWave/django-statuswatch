@@ -41,6 +41,15 @@ if SECRET_KEY.startswith("django-insecure"):
             "Generate a secure key with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
         )
 
+# Additional secret validation for production
+if not DEBUG:
+    # Validate SECRET_KEY length and complexity
+    if len(SECRET_KEY) < 50:
+        raise ValueError(
+            "SECRET_KEY must be at least 50 characters long in production.\n"
+            "Generate a secure key with: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
+        )
+
 # include wildcard for tenant subdomains like acme.django-01.local
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", ".localhost", "django-01.local", "acme.django-01.local"]
 
@@ -204,6 +213,36 @@ PENDING_REQUEUE_GRACE_SECONDS = env.int("PENDING_REQUEUE_GRACE_SECONDS", default
 # -------------------------------------------------------------------
 STRIPE_PUBLIC_KEY = env("STRIPE_PUBLIC_KEY", default="")
 STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+
+# Validate Stripe keys in production
+if not DEBUG:
+    # Skip validation for management commands that don't need Stripe
+    management_commands_skip_validation = [
+        "makemigrations",
+        "migrate",
+        "shell",
+        "dbshell",
+        "showmigrations",
+        "sqlmigrate",
+        "createsuperuser",
+        "collectstatic",
+    ]
+
+    import sys
+
+    should_validate = not any(cmd in sys.argv for cmd in management_commands_skip_validation)
+
+    if should_validate:
+        if not STRIPE_PUBLIC_KEY or not STRIPE_PUBLIC_KEY.startswith("pk_"):
+            raise ValueError(
+                "STRIPE_PUBLIC_KEY must be set and start with 'pk_' in production.\n"
+                "Get your keys from https://dashboard.stripe.com/apikeys"
+            )
+        if not STRIPE_SECRET_KEY or not STRIPE_SECRET_KEY.startswith("sk_"):
+            raise ValueError(
+                "STRIPE_SECRET_KEY must be set and start with 'sk_' in production.\n"
+                "Get your keys from https://dashboard.stripe.com/apikeys"
+            )
 
 
 # === TENANTS / JWT / CORS (canonical tail) ===

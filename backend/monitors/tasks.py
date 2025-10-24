@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import requests
 from celery import shared_task
 from django.conf import settings
-from django.db import connection
+from django.db import connection, transaction
 from django.utils import timezone
 from django_tenants.utils import schema_context
 from tenants.models import Client
@@ -42,7 +42,12 @@ def _record_result(endpoint: Endpoint, status: str, latency_ms: float | None) ->
     retry_kwargs={"max_retries": 3},
 )
 def ping_endpoint(self, endpoint_id: str, tenant_schema: str) -> None:
-    """Perform an HTTP GET request against the endpoint and persist the result."""
+    """
+    Perform an HTTP GET request against the endpoint and persist the result.
+
+    Automatically retries on network errors with exponential backoff.
+    After max retries, notifies about permanent failure.
+    """
 
     connection.set_schema_to_public()
     with schema_context(tenant_schema):
@@ -110,6 +115,11 @@ def ping_endpoint(self, endpoint_id: str, tenant_schema: str) -> None:
             status = f"error:{status_code}"
         except requests.RequestException as exc:
             latency_ms = (timezone.now() - started_at).total_seconds() * 1000
+
+            # Check if this is the final retry
+            current_retries = self.request.retries
+            max_retries = self.max_retries
+
             logger.error(
                 "Endpoint ping failed",
                 extra={
@@ -117,14 +127,89 @@ def ping_endpoint(self, endpoint_id: str, tenant_schema: str) -> None:
                     "url": endpoint.url,
                     "error": str(exc),
                     "task_id": request_id,
+                    "retry_count": current_retries,
+                    "max_retries": max_retries,
                 },
             )
+
+            # If this is the final retry, notify about permanent failure
+            if current_retries >= max_retries:
+                logger.critical(
+                    "Endpoint permanently unreachable after max retries",
+                    extra={
+                        "endpoint_id": str(endpoint.id),
+                        "url": endpoint.url,
+                        "tenant": tenant_schema,
+                        "error": str(exc),
+                        "retry_count": current_retries,
+                    },
+                )
+
+                # Schedule notification task (non-blocking)
+                try:
+                    notify_endpoint_failure.delay(
+                        endpoint_id,
+                        tenant_schema,
+                        endpoint.url,
+                        str(exc),
+                    )
+                except Exception as notification_error:
+                    logger.error(
+                        "Failed to schedule failure notification",
+                        extra={
+                            "endpoint_id": str(endpoint.id),
+                            "error": str(notification_error),
+                        },
+                    )
+
             status = "network-error"
             raise
         finally:
             _record_result(endpoint, status, latency_ms)
 
     connection.set_schema_to_public()
+
+
+@shared_task
+def notify_endpoint_failure(
+    endpoint_id: str,
+    tenant_schema: str,
+    url: str,
+    error_message: str,
+) -> None:
+    """
+    Notify about permanent endpoint failure after retry exhaustion.
+
+    This is the "dead letter queue" handler for monitoring failures.
+    In future, this can send emails, webhooks, or Slack notifications.
+    """
+    logger.error(
+        "DEAD LETTER QUEUE: Endpoint monitoring permanently failed",
+        extra={
+            "endpoint_id": endpoint_id,
+            "tenant": tenant_schema,
+            "url": url,
+            "error": error_message,
+            "timestamp": timezone.now().isoformat(),
+        },
+    )
+
+    # TODO: Implement actual notification mechanisms:
+    # - Send email to tenant admin
+    # - Send webhook to external monitoring systems
+    # - Create incident in incident management system
+    # - Update endpoint status to "permanently_failed"
+
+    # For now, just ensure it's logged prominently
+    audit_logger.critical(
+        "Endpoint requires manual intervention",
+        extra={
+            "endpoint_id": endpoint_id,
+            "tenant": tenant_schema,
+            "url": url,
+            "error": error_message,
+        },
+    )
 
 
 def _is_endpoint_due(endpoint: Endpoint, now: datetime) -> tuple[bool, datetime]:
@@ -156,7 +241,14 @@ def _is_endpoint_due(endpoint: Endpoint, now: datetime) -> tuple[bool, datetime]
 
 @shared_task(bind=True)
 def schedule_endpoint_checks(self) -> int:
-    """Inspect tenant endpoints and enqueue ping tasks when their interval elapses."""
+    """
+    Inspect tenant endpoints and enqueue ping tasks when their interval elapses.
+
+    Uses select_for_update() to prevent race conditions when multiple scheduler
+    instances run concurrently.
+
+    Optimized for scale with batch processing and early filtering.
+    """
 
     now = timezone.now()
     scheduled = 0
@@ -165,35 +257,32 @@ def schedule_endpoint_checks(self) -> int:
     connection.set_schema_to_public()
     tenants = Client.objects.exclude(schema_name="public")
 
+    # Collect all endpoints to schedule across all tenants
+    all_endpoints_to_schedule = []
+
     for tenant in tenants:
         with schema_context(tenant.schema_name):
-            for endpoint in Endpoint.objects.all():
-                audit_logger.debug(
-                    "Inspecting endpoint for scheduling",
-                    extra={
-                        "tenant": tenant.schema_name,
-                        "endpoint_id": str(endpoint.id),
-                        "last_checked_at": (
-                            endpoint.last_checked_at.isoformat()
-                            if endpoint.last_checked_at
-                            else None
-                        ),
-                        "last_enqueued_at": (
-                            endpoint.last_enqueued_at.isoformat()
-                            if endpoint.last_enqueued_at
-                            else None
-                        ),
-                        "interval_minutes": endpoint.interval_minutes,
-                    },
-                )
-                is_due, reference = _is_endpoint_due(endpoint, now)
-                if not is_due:
-                    audit_logger.info(
-                        "Endpoint not due",
+            # Optimize: Use select_for_update to prevent race conditions
+            # Lock endpoints to prevent concurrent scheduler runs from
+            # scheduling the same endpoint multiple times
+            # NOTE: select_for_update requires a transaction
+            with transaction.atomic():
+                endpoints = Endpoint.objects.select_for_update(skip_locked=True).only(
+                    "id",
+                    "url",
+                    "interval_minutes",
+                    "last_checked_at",
+                    "last_enqueued_at",
+                    "created_at",
+                    "tenant_id",
+                )  # Don't use iterator() inside transaction - it breaks locking
+
+                for endpoint in endpoints:
+                    audit_logger.debug(
+                        "Inspecting endpoint for scheduling",
                         extra={
                             "tenant": tenant.schema_name,
                             "endpoint_id": str(endpoint.id),
-                            "reference": reference.isoformat(),
                             "last_checked_at": (
                                 endpoint.last_checked_at.isoformat()
                                 if endpoint.last_checked_at
@@ -207,50 +296,85 @@ def schedule_endpoint_checks(self) -> int:
                             "interval_minutes": endpoint.interval_minutes,
                         },
                     )
-                    continue
+                    is_due, reference = _is_endpoint_due(endpoint, now)
+                    if not is_due:
+                        audit_logger.info(
+                            "Endpoint not due",
+                            extra={
+                                "tenant": tenant.schema_name,
+                                "endpoint_id": str(endpoint.id),
+                                "reference": reference.isoformat(),
+                                "last_checked_at": (
+                                    endpoint.last_checked_at.isoformat()
+                                    if endpoint.last_checked_at
+                                    else None
+                                ),
+                                "last_enqueued_at": (
+                                    endpoint.last_enqueued_at.isoformat()
+                                    if endpoint.last_enqueued_at
+                                    else None
+                                ),
+                                "interval_minutes": endpoint.interval_minutes,
+                            },
+                        )
+                        continue
 
-                endpoint.last_enqueued_at = now
-                endpoint.save(update_fields=["last_enqueued_at", "updated_at"])
+                    # Update timestamp and collect for scheduling after transaction
+                    endpoint.last_enqueued_at = now
+                    endpoint.save(update_fields=["last_enqueued_at", "updated_at"])
 
-                async_result = ping_endpoint.delay(str(endpoint.id), tenant.schema_name)
-                scheduled += 1
+                    all_endpoints_to_schedule.append(
+                        {
+                            "id": str(endpoint.id),
+                            "url": endpoint.url,
+                            "interval_minutes": endpoint.interval_minutes,
+                            "reference": reference,
+                            "tenant_schema": tenant.schema_name,
+                        }
+                    )
 
-                ping_task_id = getattr(async_result, "id", None)
-                if ping_task_id is not None:
-                    ping_task_id = str(ping_task_id)
-
-                log_message = (
-                    f"Endpoint queued for monitoring (ping_task_id={ping_task_id})"
-                    if ping_task_id
-                    else "Endpoint queued for monitoring"
-                )
-
-                audit_logger.info(
-                    log_message,
-                    extra={
-                        "tenant": tenant.schema_name,
-                        "endpoint_id": str(endpoint.id),
-                        "url": endpoint.url,
-                        "interval_minutes": endpoint.interval_minutes,
-                        "task_id": getattr(self.request, "id", None),
-                        "ping_task_id": ping_task_id,
-                    },
-                )
-
-                latency_ms = max(0.0, (now - reference).total_seconds() * 1000)
-                performance_logger.info(
-                    "Endpoint scheduling latency",
-                    extra={
-                        "endpoint_id": str(endpoint.id),
-                        "url": endpoint.url,
-                        "latency_ms": latency_ms,
-                        "tenant": tenant.schema_name,
-                        "reference": reference.isoformat(),
-                        "scheduled_at": now.isoformat(),
-                    },
-                )
-
+    # All transactions committed and schema contexts exited
+    # Now queue tasks outside any database context
     connection.set_schema_to_public()
+
+    for endpoint_data in all_endpoints_to_schedule:
+        async_result = ping_endpoint.delay(endpoint_data["id"], endpoint_data["tenant_schema"])
+        scheduled += 1
+
+        ping_task_id = getattr(async_result, "id", None)
+        if ping_task_id is not None:
+            ping_task_id = str(ping_task_id)
+
+        log_message = (
+            f"Endpoint queued for monitoring (ping_task_id={ping_task_id})"
+            if ping_task_id
+            else "Endpoint queued for monitoring"
+        )
+
+        audit_logger.info(
+            log_message,
+            extra={
+                "tenant": endpoint_data["tenant_schema"],
+                "endpoint_id": endpoint_data["id"],
+                "url": endpoint_data["url"],
+                "interval_minutes": endpoint_data["interval_minutes"],
+                "task_id": getattr(self.request, "id", None),
+                "ping_task_id": ping_task_id,
+            },
+        )
+
+        latency_ms = max(0.0, (now - endpoint_data["reference"]).total_seconds() * 1000)
+        performance_logger.info(
+            "Endpoint scheduling latency",
+            extra={
+                "endpoint_id": endpoint_data["id"],
+                "url": endpoint_data["url"],
+                "latency_ms": latency_ms,
+                "tenant": endpoint_data["tenant_schema"],
+                "reference": endpoint_data["reference"].isoformat(),
+                "scheduled_at": now.isoformat(),
+            },
+        )
 
     logger.info(
         "Endpoint scheduler run completed",

@@ -10,3 +10,4 @@ gunicorn
 whitenoise
 psycopg[binary]
 django-environ>=0.11,<0.12
+sentry-sdk[django,celery]>=2.0,<3.0
