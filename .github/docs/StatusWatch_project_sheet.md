@@ -1,4 +1,4 @@
-## `project_sheet.md`: Phase 1 MVP Specification
+## Phase 1 MVP Specification
 
 Here is a detailed breakdown of the features for your MVP. Each feature includes the user goal, front-end tasks, and the back-end tasks required to support them.
 
@@ -307,34 +307,34 @@ STRIPE_WEBHOOK_SECRET=<webhook-secret>
 
 StatusWatch MVP Phase 1 is production-ready with all critical security, reliability, and performance issues resolved. The codebase demonstrates mature engineering practices with strong test coverage, comprehensive monitoring, and minimal technical debt. Ready for beta launch to initial customers with confidence.
 
-## `project_sheet.md`: Phase 2 Specification
+## Phase 2 Specification
 
 Here is a detailed breakdown of the features for Phase 2, focusing on commercialization and production-readiness.
 
 ### 4. Stripe Subscription Checkout
 
-* **Action:** Allow a user on the Free plan to upgrade to a paid Pro plan by completing a Stripe Checkout.
-* **Test Plan:**
-    * **Backend:** Test that a request to the checkout endpoint generates a valid Stripe session URL.
-    * **Frontend:** Test that clicking the "Upgrade" button redirects the user to the Stripe payment page.
+- **Action:** Allow a user on the Free plan to upgrade to a paid Pro plan by completing a Stripe Checkout.
+- **Test Plan:**
+  - **Backend:** Test that a request to the checkout endpoint generates a valid Stripe session URL.
+  - **Frontend:** Test that clicking the "Upgrade" button redirects the user to the Stripe payment page.
 
 #### **Frontend Tasks (React)**
 
-* Create a new `/billing` page or add an "Upgrade" section to the main dashboard.
-* Display the two plans (Free, Pro) and their features (e.g., 3 endpoints vs. unlimited).
-* Add an "Upgrade to Pro" button.
-* On click, `POST` to the new backend API endpoint (`/api/billing/create-checkout-session/`).
-* On success, receive the `url` from the response and redirect the user's browser to the Stripe-hosted checkout page.
+- Create a new `/billing` page or add an "Upgrade" section to the main dashboard.
+- Display the two plans (Free, Pro) and their features (e.g., 3 endpoints vs. unlimited).
+- Add an "Upgrade to Pro" button.
+- On click, `POST` to the new backend API endpoint (`/api/billing/create-checkout-session/`).
+- On success, receive the `url` from the response and redirect the user's browser to the Stripe-hosted checkout page.
 
 #### **Backend Tasks (Django)**
 
-* Define the plan details (Price IDs) in Django settings.
-* Create a new DRF `APIView` for `/api/billing/create-checkout-session/`.
-* This view's `post` method will:
-    1.  Get the authenticated user's `Tenant`.
-    2.  Use the Stripe SDK to create a `checkout.Session`.
-    3.  Pass the `customer_email` and the Pro plan's `price_id`.
-    4.  Include `success_url` and `cancel_url` to redirect the user back to the frontend.
-    5.  Return the `url` of the created session.
+- Define the plan details (Price IDs) in Django settings.
+- Create a new DRF `APIView` for `/api/billing/create-checkout-session/`.
+- This view's `post` method will:
+  1.  Get the authenticated user's `Tenant`.
+  2.  Use the Stripe SDK to create a `checkout.Session`.
+  3.  Pass the `customer_email` and the Pro plan's `price_id`.
+  4.  Include `success_url` and `cancel_url` to redirect the user back to the frontend.
+  5.  Return the `url` of the created session.
 
 ---
