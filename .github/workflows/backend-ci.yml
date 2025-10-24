@@ -78,6 +78,9 @@ jobs:
         run: |
           python manage.py shell -c "
           from app.celery import celery_app
+          # Force task discovery by importing task modules
+          import monitors.tasks
+          import api.tasks
           tasks = [t for t in celery_app.tasks.keys() if not t.startswith('celery.')]
           print(f'Registered tasks: {len(tasks)}')
           for task in sorted(tasks):
