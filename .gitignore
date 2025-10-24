@@ -35,6 +35,7 @@ frontend/.env.*
 frontend/.env
 frontend/.env.*
 
+
 # ---- tooling ----
 .idea/
 .DS_Store
@@ -45,6 +46,7 @@ Thumbs.db
 
 # ---- backend logs ----
 backend/logs/
+backend/celerybeat-schedule.dat
 
 # ---- documentation / diagnostics ----
 # Audit reports (optional - uncomment to keep local only)
