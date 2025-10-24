@@ -60,3 +60,14 @@ enhanced_logging_config.py
 *.bak
 *.swp
 *~
+
+# Celery
+backend/celerybeat-schedule*
+# Coverage
+backend/coverage.json
+htmlcov/
+.coverage*
+
+coverage.json
+
+backend/celerybeat-schedule*
