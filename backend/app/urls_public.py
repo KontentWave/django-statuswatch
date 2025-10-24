@@ -1,3 +1,4 @@
+from api.health import health_check, metrics, readiness_check
 from api.views import TokenObtainPairWithLoggingView
 from django.contrib import admin
 from django.http import HttpResponse
@@ -11,6 +12,10 @@ def home(_):
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # Health & Monitoring endpoints (no auth required)
+    path("health/", health_check, name="health_check"),
+    path("health/ready/", readiness_check, name="readiness_check"),
+    path("metrics/", metrics, name="metrics"),
     # JWT Authentication endpoints
     path("api/auth/token/", TokenObtainPairWithLoggingView.as_view(), name="token_obtain_pair"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),

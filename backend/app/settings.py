@@ -2,11 +2,17 @@
 Django settings for app project (Django 5 + DRF + Celery + django-tenants).
 """
 
+import logging
 from collections import OrderedDict
 from datetime import timedelta
 from pathlib import Path
 
 import environ
+import sentry_sdk
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.redis import RedisIntegration
 
 # -------------------------------------------------------------------
 # Base & env
@@ -675,3 +681,84 @@ SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 
 # Frontend URL for email links (verification, password reset, etc.)
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+
+# -------------------------------------------------------------------
+# Sentry Configuration (Error & Performance Monitoring)
+# -------------------------------------------------------------------
+SENTRY_DSN = env("SENTRY_DSN", default="")
+SENTRY_ENVIRONMENT = env("SENTRY_ENVIRONMENT", default="development" if DEBUG else "production")
+SENTRY_TRACES_SAMPLE_RATE = env.float(
+    "SENTRY_TRACES_SAMPLE_RATE", default=0.1
+)  # 10% of transactions
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        # Enable performance monitoring
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        # Capture 10% of transactions for performance monitoring in production
+        # Set to 1.0 in development to capture all
+        profiles_sample_rate=1.0 if DEBUG else 0.1,
+        # Integrations
+        integrations=[
+            DjangoIntegration(
+                transaction_style="url",  # Group transactions by URL pattern
+                middleware_spans=True,  # Track middleware performance
+                signals_spans=True,  # Track Django signals
+            ),
+            CeleryIntegration(
+                monitor_beat_tasks=True,  # Monitor Celery Beat scheduled tasks
+                exclude_beat_tasks=[],  # Don't exclude any beat tasks
+            ),
+            RedisIntegration(),
+            LoggingIntegration(
+                level=logging.INFO,  # Capture info and above as breadcrumbs
+                event_level=logging.ERROR,  # Send errors and above as events
+            ),
+        ],
+        # Customize what gets sent to Sentry
+        send_default_pii=False,  # Don't send personally identifiable information
+        attach_stacktrace=True,  # Include stack traces in messages
+        # Performance
+        enable_tracing=True,
+        # Filter out health check requests from performance monitoring
+        traces_sampler=lambda sampling_context: (
+            0.0
+            if sampling_context.get("wsgi_environ", {}).get("PATH_INFO", "").startswith("/health")
+            else SENTRY_TRACES_SAMPLE_RATE
+        ),
+        # Release tracking (set via environment variable in CI/CD)
+        release=env("SENTRY_RELEASE", default=None),
+        # Before send hook to scrub sensitive data
+        before_send=lambda event, hint: _scrub_sentry_event(event, hint),
+    )
+
+
+def _scrub_sentry_event(event, hint):
+    """
+    Scrub sensitive data from Sentry events before sending.
+    """
+    # Remove sensitive headers
+    if "request" in event:
+        headers = event["request"].get("headers", {})
+        sensitive_headers = ["Authorization", "Cookie", "X-CSRF-Token"]
+        for header in sensitive_headers:
+            if header in headers:
+                headers[header] = "[Filtered]"
+
+    # Remove sensitive environment variables
+    if "contexts" in event and "runtime" in event["contexts"]:
+        env_vars = event["contexts"]["runtime"].get("env", {})
+        sensitive_keys = [
+            "SECRET_KEY",
+            "DATABASE_URL",
+            "REDIS_URL",
+            "STRIPE_SECRET_KEY",
+            "EMAIL_HOST_PASSWORD",
+        ]
+        for key in sensitive_keys:
+            if key in env_vars:
+                env_vars[key] = "[Filtered]"
+
+    return event
