@@ -147,6 +147,10 @@ export default function DashboardPage() {
     logoutMutation.mutate();
   };
 
+  const handleViewBilling = () => {
+    void navigate({ to: "/billing" });
+  };
+
   const handleEndpointInputChange = (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
@@ -230,14 +234,23 @@ export default function DashboardPage() {
             Welcome back! Your workspace data will appear here soon.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleLogout}
-          disabled={logoutMutation.isPending}
-          className="inline-flex items-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          {logoutMutation.isPending ? "Logging out…" : "Log Out"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleViewBilling}
+            className="inline-flex items-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            Manage Billing
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={logoutMutation.isPending}
+            className="inline-flex items-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {logoutMutation.isPending ? "Logging out…" : "Log Out"}
+          </button>
+        </div>
       </header>
 
       {isLoading && (

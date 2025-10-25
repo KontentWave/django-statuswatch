@@ -596,6 +596,14 @@ LOGGING = {
             "backupCount": 5,
             "formatter": "verbose",
         },
+        "file_billing": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "billing.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
     },
     "loggers": {
         "django": {
@@ -630,6 +638,11 @@ LOGGING = {
         },
         "payments.checkout": {
             "handlers": ["console", "file_payments"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments.billing": {
+            "handlers": ["console", "file_billing"],
             "level": "INFO",
             "propagate": False,
         },
@@ -694,7 +707,7 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@statuswatch.loca
 SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 
 # Frontend URL for email links (verification, password reset, etc.)
-FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+FRONTEND_URL = env("FRONTEND_URL", default="https://localhost:5173")
 
 # -------------------------------------------------------------------
 # Sentry Configuration (Error & Performance Monitoring)

@@ -337,4 +337,25 @@ Here is a detailed breakdown of the features for Phase 2, focusing on commercial
   4.  Include `success_url` and `cancel_url` to redirect the user back to the frontend.
   5.  Return the `url` of the created session.
 
+#### **Implementation Notes**
+
+- **Frontend**
+
+  - `frontend/src/app/router.tsx` registers `/billing`, `/billing/success`, and `/billing/cancel` beneath the authenticated route branch so only signed-in users can initiate the upgrade flow.
+  - `BillingPage` (`frontend/src/pages/Billing.tsx`) calls `createBillingCheckoutSession` via TanStack Query, persists the chosen plan with `billing-storage`, and logs structured events through `billing-logger` before redirecting the browser to Stripe.
+  - `BillingSuccessPage` and `BillingCancelPage` (`frontend/src/pages/BillingSuccess.tsx`, `frontend/src/pages/BillingCancel.tsx`) read the stored plan, surface the `session_id` when present, emit `completed`/`canceled` billing events, and provide navigation back to `/dashboard` or `/billing`.
+  - Supporting utilities live in `frontend/src/lib/billing-client.ts`, `frontend/src/lib/billing-storage.ts`, and `frontend/src/lib/billing-logger.ts`, centralising API access, session persistence, and log payload shapes.
+  - Vitest coverage (`frontend/src/pages/__tests__/BillingPage.test.tsx`, `frontend/src/pages/__tests__/BillingSuccessPage.test.tsx`, `frontend/src/pages/__tests__/BillingCancelPage.test.tsx`) asserts redirects, logging hooks, and storage hygiene under success and error conditions.
+
+- **Backend**
+
+  - `BillingCheckoutSessionView` (`backend/payments/views.py`) validates Stripe configuration, maps plans to price IDs, and creates subscription-mode Checkout sessions that carry tenant metadata and the user email.
+  - The view writes to the `payments.billing` and `payments.checkout` loggers, which feed `backend/logs/billing.log` and `backend/logs/payments.log` for audit visibility.
+  - `payments/billing_urls.py` exposes `create-checkout-session/`, and both `app/urls_tenant.py` and `app/urls_public.py` include it at `/api/billing/` to keep routing consistent across schemas.
+  - `app/settings.py` introduces a configurable `FRONTEND_URL` (default `http://localhost:5173`) used for success/cancel redirects in addition to the existing Stripe key settings; local `.env` now pins `FRONTEND_URL=https://localhost:5173` to align with the HTTPS Vite server.
+
+- **Testing & Ops**
+  - Manual smoke tests covered error logging for missing/invalid price IDs and a full checkout using Stripe test credentials, verifying session IDs and the return pages.
+  - Next steps include wiring Stripe webhooks to persist subscription status and updating `/billing` to reflect an active Pro plan with cancel/downgrade controls once the backend state is authoritative.
+
 ---

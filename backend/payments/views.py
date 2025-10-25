@@ -13,6 +13,7 @@ from stripe import _error as stripe_error
 
 logger = logging.getLogger(__name__)
 checkout_logger = logging.getLogger("payments.checkout")
+billing_logger = logging.getLogger("payments.billing")
 
 
 @api_view(["GET"])
@@ -126,19 +127,36 @@ class BillingCheckoutSessionView(APIView):
 
     def post(self, request):
         if not settings.STRIPE_SECRET_KEY:
-            checkout_logger.error("STRIPE_SECRET_KEY not configured")
+            billing_logger.error(
+                "STRIPE_SECRET_KEY not configured",
+                extra={
+                    "event": "billing_checkout",
+                    "status": "error",
+                    "reason": "missing_secret",
+                    "plan": sanitize_log_value(request.data.get("plan", "")),
+                    "user_id": request.user.id,
+                },
+            )
             raise ConfigurationError("Payment system is not properly configured.")
 
         plan = str(request.data.get("plan", "pro")).lower()
         plan_price_map = {"pro": settings.STRIPE_PRO_PRICE_ID}
         price_id = plan_price_map.get(plan)
 
+        sanitized_plan = sanitize_log_value(plan)
+        log_context_base = {
+            "event": "billing_checkout",
+            "plan": sanitized_plan,
+            "user_id": request.user.id,
+        }
+
         if price_id is None:
-            checkout_logger.warning(
+            billing_logger.warning(
                 "Received checkout request for unknown plan",
                 extra={
-                    "plan": sanitize_log_value(plan),
-                    "user_id": request.user.id,
+                    **log_context_base,
+                    "status": "error",
+                    "reason": "unknown_plan",
                 },
             )
             return Response(
@@ -147,11 +165,12 @@ class BillingCheckoutSessionView(APIView):
             )
 
         if not price_id:
-            checkout_logger.error(
+            billing_logger.error(
                 "Stripe price ID not configured for plan",
                 extra={
-                    "plan": sanitize_log_value(plan),
-                    "user_id": request.user.id,
+                    **log_context_base,
+                    "status": "error",
+                    "reason": "missing_price_id",
                 },
             )
             raise ConfigurationError("Subscription plan is temporarily unavailable.")
@@ -163,6 +182,8 @@ class BillingCheckoutSessionView(APIView):
         base_frontend_url = settings.FRONTEND_URL.rstrip("/")
         success_url = f"{base_frontend_url}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base_frontend_url}/billing/cancel"
+
+        sanitized_tenant = sanitize_log_value(tenant_schema)
 
         try:
             session = stripe.checkout.Session.create(
@@ -178,18 +199,23 @@ class BillingCheckoutSessionView(APIView):
                 cancel_url=cancel_url,
             )
 
-            sanitized_tenant = sanitize_log_value(tenant_schema)
             sanitized_session_id = sanitize_log_value(getattr(session, "id", ""))
-            sanitized_plan = sanitize_log_value(plan)
 
             log_context = {
+                **log_context_base,
                 "tenant_schema": sanitized_tenant,
-                "user_id": request.user.id,
-                "plan": sanitized_plan,
                 "session_id": sanitized_session_id,
                 "checkout_mode": "subscription",
+                "status": "success",
             }
-
+            billing_logger.info(
+                "Created Stripe checkout session | tenant=%s plan=%s user_id=%s session_id=%s",
+                log_context["tenant_schema"],
+                log_context["plan"],
+                log_context["user_id"],
+                log_context["session_id"],
+                extra=log_context,
+            )
             checkout_logger.info(
                 "Created Stripe checkout session | tenant=%s plan=%s user_id=%s session_id=%s",
                 log_context["tenant_schema"],
@@ -202,56 +228,121 @@ class BillingCheckoutSessionView(APIView):
             return Response({"url": session.url}, status=status.HTTP_201_CREATED)
 
         except stripe_error.CardError as e:
-            checkout_logger.warning(
-                sanitize_log_value(
-                    f"Stripe card error for user {request.user.id}: {e.user_message}"
-                ),
-                extra={"stripe_error_code": sanitize_log_value(e.code)},
+            sanitized_message = sanitize_log_value(
+                f"Stripe card error for user {request.user.id}: {e.user_message}"
             )
+            extra_payload = {
+                **log_context_base,
+                "status": "error",
+                "error_type": "card_error",
+                "stripe_error_code": sanitize_log_value(e.code),
+            }
+            billing_logger.warning(sanitized_message, extra=extra_payload)
+            checkout_logger.warning(sanitized_message, extra=extra_payload)
             raise InvalidPaymentMethodError(
                 "Your payment method was declined. Please try a different payment method."
             )
 
         except stripe_error.InvalidRequestError as e:
-            checkout_logger.error(
-                sanitize_log_value(f"Stripe invalid request for user {request.user.id}: {str(e)}"),
+            sanitized_message = sanitize_log_value(
+                f"Stripe invalid request for user {request.user.id}: {str(e)}"
+            )
+            extra_payload = {
+                **log_context_base,
+                "status": "error",
+                "error_type": "invalid_request",
+            }
+            billing_logger.error(
+                sanitized_message,
                 exc_info=settings.DEBUG,
-                extra={
-                    "plan": sanitize_log_value(plan),
-                },
+                extra=extra_payload,
+            )
+            checkout_logger.error(
+                sanitized_message,
+                exc_info=settings.DEBUG,
+                extra=extra_payload,
             )
             raise PaymentProcessingError()
 
         except stripe_error.AuthenticationError as e:
-            checkout_logger.critical(
-                sanitize_log_value(f"Stripe authentication error: {str(e)}"),
+            sanitized_message = sanitize_log_value(f"Stripe authentication error: {str(e)}")
+            extra_payload = {
+                **log_context_base,
+                "status": "error",
+                "error_type": "auth_error",
+            }
+            billing_logger.critical(
+                sanitized_message,
                 exc_info=settings.DEBUG,
+                extra=extra_payload,
+            )
+            checkout_logger.critical(
+                sanitized_message,
+                exc_info=settings.DEBUG,
+                extra=extra_payload,
             )
             raise ConfigurationError("Payment system authentication failed.")
 
         except stripe_error.APIConnectionError as e:
-            checkout_logger.error(
-                sanitize_log_value(f"Stripe API connection error: {str(e)}"),
+            sanitized_message = sanitize_log_value(f"Stripe API connection error: {str(e)}")
+            extra_payload = {
+                **log_context_base,
+                "status": "error",
+                "error_type": "api_connection",
+            }
+            billing_logger.error(
+                sanitized_message,
                 exc_info=settings.DEBUG,
+                extra=extra_payload,
+            )
+            checkout_logger.error(
+                sanitized_message,
+                exc_info=settings.DEBUG,
+                extra=extra_payload,
             )
             raise PaymentProcessingError(
                 "Unable to connect to payment processor. Please try again later."
             )
 
         except stripe_error.StripeError as e:
-            checkout_logger.error(
-                sanitize_log_value(f"Stripe error for user {request.user.id}: {str(e)}"),
+            sanitized_message = sanitize_log_value(
+                f"Stripe error for user {request.user.id}: {str(e)}"
+            )
+            extra_payload = {
+                **log_context_base,
+                "status": "error",
+                "error_type": "generic_stripe",
+            }
+            billing_logger.error(
+                sanitized_message,
                 exc_info=settings.DEBUG,
+                extra=extra_payload,
+            )
+            checkout_logger.error(
+                sanitized_message,
+                exc_info=settings.DEBUG,
+                extra=extra_payload,
             )
             raise PaymentProcessingError()
 
         except Exception as e:  # noqa: BLE001
-            checkout_logger.error(
-                sanitize_log_value(f"Unexpected error in billing checkout session: {str(e)}"),
+            sanitized_message = sanitize_log_value(
+                f"Unexpected error in billing checkout session: {str(e)}"
+            )
+            extra_payload = {
+                **log_context_base,
+                "tenant_schema": sanitized_tenant,
+                "status": "error",
+                "error_type": "unexpected",
+            }
+            billing_logger.error(
+                sanitized_message,
                 exc_info=settings.DEBUG,
-                extra={
-                    "plan": sanitize_log_value(plan),
-                    "tenant_schema": sanitize_log_value(tenant_schema),
-                },
+                extra=extra_payload,
+            )
+            checkout_logger.error(
+                sanitized_message,
+                exc_info=settings.DEBUG,
+                extra=extra_payload,
             )
             raise PaymentProcessingError()

@@ -270,6 +270,30 @@ describe("DashboardPage", () => {
     );
   });
 
+  it("navigates to billing when requested", async () => {
+    fetchCurrentUserMock.mockResolvedValue({
+      id: 1,
+      username: "tony",
+      email: "tony@stark.com",
+      first_name: "Tony",
+      last_name: "Stark",
+      is_staff: false,
+      date_joined: "2025-01-01T12:00:00Z",
+      groups: ["Owner"],
+    });
+
+    renderDashboard();
+
+    expect(
+      await screen.findByText(/you are signed in as/i)
+    ).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /manage billing/i }));
+
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/billing" });
+  });
+
   it("logs pagination events when changing pages", async () => {
     fetchCurrentUserMock.mockResolvedValue({
       id: 1,

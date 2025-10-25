@@ -9,6 +9,9 @@ import Home from "@/pages/Home";
 import LoginPage from "@/pages/Login";
 import RegisterPage from "@/pages/Register";
 import DashboardPage from "@/pages/Dashboard";
+import BillingPage from "@/pages/Billing";
+import BillingSuccessPage from "@/pages/BillingSuccess";
+import BillingCancelPage from "@/pages/BillingCancel";
 import { getAccessToken } from "@/lib/auth";
 
 const rootRoute = createRootRoute();
@@ -52,12 +55,32 @@ const dashboardRoute = createRoute({
   path: "/dashboard",
   component: DashboardPage,
 });
+const billingRoute = createRoute({
+  getParentRoute: () => authenticatedRoute,
+  path: "/billing",
+  component: BillingPage,
+});
+const billingSuccessRoute = createRoute({
+  getParentRoute: () => authenticatedRoute,
+  path: "/billing/success",
+  component: BillingSuccessPage,
+});
+const billingCancelRoute = createRoute({
+  getParentRoute: () => authenticatedRoute,
+  path: "/billing/cancel",
+  component: BillingCancelPage,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
   registerRoute,
   loginRoute,
-  authenticatedRoute.addChildren([dashboardRoute]),
+  authenticatedRoute.addChildren([
+    dashboardRoute,
+    billingRoute,
+    billingSuccessRoute,
+    billingCancelRoute,
+  ]),
 ]);
 
 const router = createRouter({ routeTree });
