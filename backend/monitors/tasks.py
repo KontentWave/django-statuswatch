@@ -49,7 +49,7 @@ def ping_endpoint(self, endpoint_id: str, tenant_schema: str) -> None:
     After max retries, notifies about permanent failure.
     """
 
-    connection.set_schema_to_public()
+    connection.set_schema_to_public()  # type: ignore[attr-defined]
     with schema_context(tenant_schema):
         try:
             endpoint = Endpoint.objects.select_related("tenant").get(id=endpoint_id)
@@ -167,7 +167,7 @@ def ping_endpoint(self, endpoint_id: str, tenant_schema: str) -> None:
         finally:
             _record_result(endpoint, status, latency_ms)
 
-    connection.set_schema_to_public()
+    connection.set_schema_to_public()  # type: ignore[attr-defined]
 
 
 @shared_task
@@ -254,7 +254,7 @@ def schedule_endpoint_checks(self) -> int:
     scheduled = 0
 
     # Ensure we start from the public schema before iterating tenants.
-    connection.set_schema_to_public()
+    connection.set_schema_to_public()  # type: ignore[attr-defined]
     tenants = Client.objects.exclude(schema_name="public")
 
     # Collect all endpoints to schedule across all tenants
@@ -335,7 +335,7 @@ def schedule_endpoint_checks(self) -> int:
 
     # All transactions committed and schema contexts exited
     # Now queue tasks outside any database context
-    connection.set_schema_to_public()
+    connection.set_schema_to_public()  # type: ignore[attr-defined]
 
     for endpoint_data in all_endpoints_to_schedule:
         async_result = ping_endpoint.delay(endpoint_data["id"], endpoint_data["tenant_schema"])

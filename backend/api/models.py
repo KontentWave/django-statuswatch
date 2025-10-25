@@ -32,7 +32,7 @@ class UserProfile(models.Model):
         default=uuid.uuid4, editable=False, help_text="Token sent to user's email for verification"
     )
 
-    email_verification_sent_at = models.DateTimeField(
+    email_verification_sent_at: models.DateTimeField | None = models.DateTimeField(
         null=True, blank=True, help_text="When the verification email was last sent"
     )
 

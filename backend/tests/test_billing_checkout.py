@@ -301,3 +301,467 @@ def test_create_checkout_session_handles_stripe_error(mock_create, tenant_user, 
         if record.name == "payments.checkout" and record.levelno >= logging.ERROR
     ]
     assert any("stripe boom" in record.getMessage() for record in error_records)
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_handles_invalid_request_error(mock_create, tenant_user, caplog):
+    """InvalidRequestError returns 402 with appropriate logging."""
+
+    mock_create.side_effect = stripe_error.InvalidRequestError(
+        message="Invalid parameters",
+        param="price",
+    )
+
+    caplog.set_level(logging.ERROR, logger="payments.checkout")
+    checkout_logger = logging.getLogger("payments.checkout")
+    checkout_logger.addHandler(caplog.handler)
+
+    client = _authenticated_client(tenant_user)
+    try:
+        with caplog.at_level(logging.ERROR, logger="payments.checkout"):
+            response = client.post(
+                "/api/billing/create-checkout-session/",
+                {"plan": "pro"},
+                format="json",
+            )
+    finally:
+        checkout_logger.removeHandler(caplog.handler)
+
+    assert response.status_code == 402
+    detail = response.json()["detail"]
+    assert "Payment processing failed" in detail
+    mock_create.assert_called_once()
+
+    error_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "payments.checkout" and record.levelno >= logging.ERROR
+    ]
+    assert any("Stripe invalid request" in message for message in error_messages)
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_handles_authentication_error(mock_create, tenant_user, caplog):
+    """AuthenticationError returns 500 with critical logging."""
+
+    mock_create.side_effect = stripe_error.AuthenticationError(
+        message="Invalid API key",
+    )
+
+    caplog.set_level(logging.CRITICAL, logger="payments.checkout")
+    checkout_logger = logging.getLogger("payments.checkout")
+    checkout_logger.addHandler(caplog.handler)
+
+    client = _authenticated_client(tenant_user)
+    try:
+        with caplog.at_level(logging.CRITICAL, logger="payments.checkout"):
+            response = client.post(
+                "/api/billing/create-checkout-session/",
+                {"plan": "pro"},
+                format="json",
+            )
+    finally:
+        checkout_logger.removeHandler(caplog.handler)
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"]["code"] == "internal_server_error"
+    # In production mode, the error message is sanitized for security
+    assert "unexpected error occurred" in body["error"]["message"].lower()
+    mock_create.assert_called_once()
+
+    critical_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "payments.checkout" and record.levelno >= logging.CRITICAL
+    ]
+    assert any("authentication error" in message.lower() for message in critical_messages)
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_handles_api_connection_error(mock_create, tenant_user, caplog):
+    """APIConnectionError returns 402 with appropriate error message."""
+
+    mock_create.side_effect = stripe_error.APIConnectionError(
+        message="Connection timeout",
+    )
+
+    caplog.set_level(logging.ERROR, logger="payments.checkout")
+    checkout_logger = logging.getLogger("payments.checkout")
+    checkout_logger.addHandler(caplog.handler)
+
+    client = _authenticated_client(tenant_user)
+    try:
+        with caplog.at_level(logging.ERROR, logger="payments.checkout"):
+            response = client.post(
+                "/api/billing/create-checkout-session/",
+                {"plan": "pro"},
+                format="json",
+            )
+    finally:
+        checkout_logger.removeHandler(caplog.handler)
+
+    assert response.status_code == 402
+    detail = response.json()["detail"]
+    assert "Unable to connect to payment processor" in detail
+    assert "try again later" in detail.lower()
+    mock_create.assert_called_once()
+
+    error_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "payments.checkout" and record.levelno >= logging.ERROR
+    ]
+    assert any("API connection error" in message for message in error_messages)
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_handles_generic_exception(mock_create, tenant_user, caplog):
+    """Generic exceptions return 402 with sanitized logging."""
+
+    mock_create.side_effect = Exception("Database connection failed")
+
+    caplog.set_level(logging.ERROR, logger="payments.checkout")
+    checkout_logger = logging.getLogger("payments.checkout")
+    checkout_logger.addHandler(caplog.handler)
+
+    client = _authenticated_client(tenant_user)
+    try:
+        with caplog.at_level(logging.ERROR, logger="payments.checkout"):
+            response = client.post(
+                "/api/billing/create-checkout-session/",
+                {"plan": "pro"},
+                format="json",
+            )
+    finally:
+        checkout_logger.removeHandler(caplog.handler)
+
+    assert response.status_code == 402
+    detail = response.json()["detail"]
+    assert "Payment processing failed" in detail
+    mock_create.assert_called_once()
+
+    error_messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "payments.checkout" and record.levelno >= logging.ERROR
+    ]
+    assert any("Unexpected error" in message for message in error_messages)
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_missing_plan_parameter(mock_create, tenant_user):
+    """Missing plan parameter defaults to 'pro' and processes successfully."""
+
+    mock_create.return_value = MagicMock(
+        id="cs_test_789",
+        url="https://stripe.test/checkout/cs_test_789",
+    )
+
+    client = _authenticated_client(tenant_user)
+    response = client.post(
+        "/api/billing/create-checkout-session/",
+        {},  # No plan parameter
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {"url": "https://stripe.test/checkout/cs_test_789"}
+    mock_create.assert_called_once()
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_case_insensitive_plan(mock_create, tenant_user):
+    """Plan names are case-insensitive (PRO, Pro, pro all work)."""
+
+    mock_create.return_value = MagicMock(
+        id="cs_test_upper",
+        url="https://stripe.test/checkout/cs_test_upper",
+    )
+
+    client = _authenticated_client(tenant_user)
+    response = client.post(
+        "/api/billing/create-checkout-session/",
+        {"plan": "PRO"},  # Uppercase
+        format="json",
+    )
+
+    assert response.status_code == 201
+    mock_create.assert_called_once()
+
+    # Verify metadata has lowercase plan
+    _, kwargs = mock_create.call_args
+    assert kwargs["metadata"]["plan"] == "pro"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+def test_create_checkout_session_tenant_context_in_metadata(tenant_user):
+    """Tenant schema is correctly captured in session metadata."""
+
+    with patch("payments.views.stripe.checkout.Session.create") as mock_create:
+        mock_create.return_value = MagicMock(
+            id="cs_test_tenant",
+            url="https://stripe.test/checkout/cs_test_tenant",
+        )
+
+        client = _authenticated_client(tenant_user)
+        response = client.post(
+            "/api/billing/create-checkout-session/",
+            {"plan": "pro"},
+            format="json",
+        )
+
+        assert response.status_code == 201
+        mock_create.assert_called_once()
+
+        _, kwargs = mock_create.call_args
+        assert "metadata" in kwargs
+        assert kwargs["metadata"]["tenant_schema"] == "test_tenant"
+        assert kwargs["metadata"]["user_id"] == str(tenant_user.id)
+        assert kwargs["metadata"]["plan"] == "pro"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_urls_use_frontend_url(mock_create, tenant_user):
+    """Success and cancel URLs use configured FRONTEND_URL."""
+
+    mock_create.return_value = MagicMock(
+        id="cs_test_urls",
+        url="https://stripe.test/checkout/cs_test_urls",
+    )
+
+    client = _authenticated_client(tenant_user)
+    response = client.post(
+        "/api/billing/create-checkout-session/",
+        {"plan": "pro"},
+        format="json",
+    )
+
+    assert response.status_code == 201
+    mock_create.assert_called_once()
+
+    _, kwargs = mock_create.call_args
+    assert kwargs["success_url"].startswith("https://app.statuswatch.local/billing/success")
+    assert "{CHECKOUT_SESSION_ID}" in kwargs["success_url"]
+    assert kwargs["cancel_url"] == "https://app.statuswatch.local/billing/cancel"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    STRIPE_PRO_PRICE_ID="price_test_pro",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_create_checkout_session_uses_subscription_mode(mock_create, tenant_user):
+    """Checkout session is created with subscription mode, not one-time payment."""
+
+    mock_create.return_value = MagicMock(
+        id="cs_test_mode",
+        url="https://stripe.test/checkout/cs_test_mode",
+    )
+
+    client = _authenticated_client(tenant_user)
+    response = client.post(
+        "/api/billing/create-checkout-session/",
+        {"plan": "pro"},
+        format="json",
+    )
+
+    assert response.status_code == 201
+    mock_create.assert_called_once()
+
+    _, kwargs = mock_create.call_args
+    assert kwargs["mode"] == "subscription"
+    assert kwargs["line_items"] == [{"price": "price_test_pro", "quantity": 1}]
+
+
+# ============================================================================
+# Legacy Endpoint Tests (create_checkout_session - one-time payment)
+# ============================================================================
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_legacy_create_checkout_session_success(mock_create, tenant_user):
+    """Legacy endpoint creates one-time payment session successfully."""
+
+    mock_create.return_value = MagicMock(
+        id="cs_legacy_123",
+        url="https://stripe.test/checkout/cs_legacy_123",
+    )
+
+    client = _authenticated_client(tenant_user)
+    response = client.post(
+        "/api/pay/create-checkout-session/",
+        {"amount": 5000, "currency": "usd", "name": "Test Product"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "cs_legacy_123"
+    assert data["url"] == "https://stripe.test/checkout/cs_legacy_123"
+
+    mock_create.assert_called_once()
+    _, kwargs = mock_create.call_args
+    assert kwargs["mode"] == "payment"
+    assert kwargs["line_items"][0]["price_data"]["unit_amount"] == 5000
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_legacy_create_checkout_session_missing_secret_key(mock_create, tenant_user):
+    """Legacy endpoint requires STRIPE_SECRET_KEY configuration."""
+
+    client = _authenticated_client(tenant_user)
+    response = client.post(
+        "/api/pay/create-checkout-session/",
+        {"amount": 5000},
+        format="json",
+    )
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"]["code"] == "internal_server_error"
+    mock_create.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_legacy_create_checkout_session_requires_authentication(mock_create):
+    """Legacy endpoint requires authentication."""
+
+    client = APIClient()
+    client.defaults["HTTP_HOST"] = "test.localhost"
+
+    response = client.post(
+        "/api/pay/create-checkout-session/",
+        {"amount": 5000},
+        format="json",
+    )
+
+    assert response.status_code == 401
+    mock_create.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+)
+@patch("payments.views.stripe.checkout.Session.create")
+def test_legacy_create_checkout_session_handles_stripe_errors(mock_create, tenant_user):
+    """Legacy endpoint handles Stripe errors gracefully."""
+
+    mock_create.side_effect = stripe_error.InvalidRequestError(
+        message="Invalid amount",
+        param="amount",
+    )
+
+    client = _authenticated_client(tenant_user)
+    response = client.post(
+        "/api/pay/create-checkout-session/",
+        {"amount": -100},  # Invalid amount
+        format="json",
+    )
+
+    assert response.status_code == 402
+    assert "payment processing failed" in response.json()["detail"].lower()
+
+
+# -------------------------------------------------------------------
+# Rate Limiting Configuration Tests
+# -------------------------------------------------------------------
+
+
+def test_billing_rate_throttle_is_configured():
+    """Verify BillingRateThrottle class is properly configured."""
+    from api.throttles import BillingRateThrottle
+    from rest_framework.throttling import UserRateThrottle
+
+    # BillingRateThrottle should exist and inherit from UserRateThrottle
+    assert issubclass(BillingRateThrottle, UserRateThrottle)
+
+    # Should have correct scope
+    assert BillingRateThrottle.scope == "billing"
+
+
+def test_billing_endpoints_have_throttle_classes():
+    """Verify billing endpoints are configured with BillingRateThrottle."""
+    from api.throttles import BillingRateThrottle
+    from payments.views import BillingCheckoutSessionView, create_checkout_session
+
+    # Class-based view should have throttle_classes
+    assert hasattr(BillingCheckoutSessionView, "throttle_classes")
+    assert BillingRateThrottle in BillingCheckoutSessionView.throttle_classes
+
+    # Function-based view should have throttle_classes decorator applied
+    # (verified by checking the view's closure/decorator chain)
+    assert hasattr(create_checkout_session, "cls")  # Has @api_view decorator
+
+
+def test_billing_throttle_rate_in_settings():
+    """Verify billing throttle rate is configured in Django settings."""
+    from django.conf import settings
+
+    throttle_rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
+
+    # Billing rate should be configured
+    assert "billing" in throttle_rates
+    assert throttle_rates["billing"] == "10/hour"

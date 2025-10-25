@@ -19,8 +19,8 @@ auth_logger = logging.getLogger("api.auth")
 
 
 class PingView(APIView):
-    authentication_classes = []
-    permission_classes = []
+    authentication_classes: list[type] = []
+    permission_classes: list[type] = []
 
     def get(self, request):
         return Response({"ok": True})
@@ -69,7 +69,7 @@ class RegistrationView(APIView):
     - 20 requests per minute burst protection
     """
 
-    authentication_classes = []
+    authentication_classes: list[type] = []
     permission_classes = [AllowAny]
     throttle_classes = [RegistrationRateThrottle, BurstRateThrottle]
 
@@ -107,8 +107,8 @@ class RegistrationView(APIView):
 class TokenObtainPairWithLoggingView(TokenViewBase):
     """JWT login endpoint with structured logging and throttling."""
 
-    authentication_classes = []
-    permission_classes = [AllowAny]
+    authentication_classes = ()  # type: ignore[assignment]
+    permission_classes = (AllowAny,)  # type: ignore[assignment]
     throttle_classes = [LoginRateThrottle, BurstRateThrottle]
     serializer_class = TokenObtainPairSerializer
 

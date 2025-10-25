@@ -16,9 +16,9 @@ class Endpoint(models.Model):
     url = models.URLField(max_length=500)
     interval_minutes = models.PositiveIntegerField(default=5)
     last_status = models.CharField(max_length=32, default="pending")
-    last_checked_at = models.DateTimeField(null=True, blank=True)
-    last_latency_ms = models.FloatField(null=True, blank=True)
-    last_enqueued_at = models.DateTimeField(null=True, blank=True)
+    last_checked_at: models.DateTimeField | None = models.DateTimeField(null=True, blank=True)
+    last_latency_ms: models.FloatField | None = models.FloatField(null=True, blank=True)
+    last_enqueued_at: models.DateTimeField | None = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

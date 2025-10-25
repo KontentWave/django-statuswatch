@@ -3,9 +3,10 @@ import logging
 import stripe
 from api.exceptions import ConfigurationError, InvalidPaymentMethodError, PaymentProcessingError
 from api.logging_utils import sanitize_log_value
+from api.throttles import BillingRateThrottle
 from django.conf import settings
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -24,11 +25,13 @@ def stripe_config(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([BillingRateThrottle])
 def create_checkout_session(request):
     """
     Create a Stripe Checkout session for payment processing.
 
     Sanitizes all Stripe errors to prevent API key leakage.
+    Rate limited to prevent billing abuse.
     """
     if not settings.STRIPE_SECRET_KEY:
         logger.error("STRIPE_SECRET_KEY not configured")
@@ -121,9 +124,14 @@ def create_checkout_session(request):
 
 
 class BillingCheckoutSessionView(APIView):
-    """Create Stripe Checkout session for subscription upgrades."""
+    """
+    Create Stripe Checkout session for subscription upgrades.
+
+    Rate limited to prevent billing abuse and duplicate transactions.
+    """
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [BillingRateThrottle]
 
     def post(self, request):
         if not settings.STRIPE_SECRET_KEY:

@@ -3,7 +3,6 @@ Django settings for app project (Django 5 + DRF + Celery + django-tenants).
 """
 
 import logging
-from collections import OrderedDict
 from datetime import timedelta
 from pathlib import Path
 
@@ -65,7 +64,7 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1", ".localhost", "django-01.local", "acm
 TENANT_MODEL = "tenants.Client"  # app_label.ModelName
 DOMAIN_MODEL = "tenants.Domain"
 
-SHARED_APPS = (
+SHARED_APPS: tuple[str, ...] = (
     "django_tenants",  # must be first
     "django.contrib.contenttypes",  # required by tenants
     "django.contrib.staticfiles",
@@ -74,7 +73,7 @@ SHARED_APPS = (
     "tenants",  # your tenants app (Client/Domain models)
 )
 
-TENANT_APPS = (
+TENANT_APPS: tuple[str, ...] = (
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.sessions",
@@ -258,31 +257,6 @@ TENANT_MODEL = "tenants.Client"
 DOMAIN_MODEL = "tenants.Domain"
 TENANT_DOMAIN_MODEL = "tenants.Domain"
 PUBLIC_SCHEMA_NAME = "public"
-
-SHARED_APPS = [
-    "django_tenants",
-    "tenants",
-    "django.contrib.contenttypes",
-    "django.contrib.staticfiles",
-    "corsheaders",
-]
-TENANT_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
-    "django.contrib.contenttypes",
-    "django.contrib.sessions",
-    "django.contrib.messages",
-    "rest_framework",
-    "rest_framework_simplejwt.token_blacklist",  # Per-tenant JWT blacklist tables
-    "api",
-    "payments",
-    "monitors",
-]
-INSTALLED_APPS = list(OrderedDict.fromkeys(SHARED_APPS + TENANT_APPS))
-DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
-
-TENANT_URLCONF = "app.urls_tenant"  # <-- the file that has admin/
-PUBLIC_SCHEMA_URLCONF = "app.urls_public"
 ROOT_URLCONF = "app.urls_tenant"
 
 MIDDLEWARE = [
@@ -334,6 +308,7 @@ REST_FRAMEWORK = {
         "login": "10/hour",  # Login endpoint (prevent brute-force)
         "burst": "20/min",  # Burst protection (short-term)
         "sustained": "100/day",  # Long-term protection
+        "billing": "10/hour",  # Billing/checkout endpoints (prevent abuse)
     },
 }
 # -------------------------------------------------------------------
@@ -460,7 +435,7 @@ SECURE_REFERRER_POLICY = "same-origin"
 # Permissions-Policy (formerly Feature-Policy)
 # Control which browser features can be used
 # Disable potentially risky features like geolocation, camera, microphone
-PERMISSIONS_POLICY = {
+PERMISSIONS_POLICY: dict[str, list[str]] = {
     "geolocation": [],  # No sites can access geolocation
     "camera": [],  # No sites can access camera
     "microphone": [],  # No sites can access microphone
@@ -477,15 +452,18 @@ PERMISSIONS_POLICY = {
 # Then configure CSP_* settings in detail
 if ENFORCE_HTTPS:
     # Strict CSP for production
-    CSP_DEFAULT_SRC = ("'self'",)
-    CSP_SCRIPT_SRC = (
+    CSP_DEFAULT_SRC: tuple[str, ...] = ("'self'",)
+    CSP_SCRIPT_SRC: tuple[str, ...] = (
         "'self'",
         "'unsafe-inline'",
     )  # TODO: Remove unsafe-inline when frontend uses nonces
-    CSP_STYLE_SRC = ("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")
-    CSP_FONT_SRC = ("'self'", "https://fonts.gstatic.com")
-    CSP_IMG_SRC = ("'self'", "data:", "https:")
-    CSP_CONNECT_SRC = ("'self'", "https://api.stripe.com")  # Allow Stripe API calls
+    CSP_STYLE_SRC: tuple[str, ...] = ("'self'", "'unsafe-inline'", "https://fonts.googleapis.com")
+    CSP_FONT_SRC: tuple[str, ...] = ("'self'", "https://fonts.gstatic.com")
+    CSP_IMG_SRC: tuple[str, ...] = ("'self'", "data:", "https:")
+    CSP_CONNECT_SRC: tuple[str, ...] = (
+        "'self'",
+        "https://api.stripe.com",
+    )  # Allow Stripe API calls
     CSP_FRAME_ANCESTORS = ("'none'",)  # Same as X-Frame-Options: DENY
     CSP_BASE_URI = ("'self'",)
     CSP_FORM_ACTION = ("'self'",)

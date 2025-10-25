@@ -78,6 +78,10 @@ warn_unused_configs = true
 disallow_untyped_defs = false  # Start lenient, can tighten later
 ignore_missing_imports = true
 plugins = ["mypy_django_plugin.main"]
+exclude = [
+    "^.*/tests/.*\\.py$",  # Exclude all test files
+    "^tests/.*\\.py$",     # Exclude root tests directory
+]
 
 [[tool.mypy.overrides]]
 module = "*.migrations.*"

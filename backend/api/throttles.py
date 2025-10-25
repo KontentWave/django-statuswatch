@@ -95,3 +95,22 @@ class AuthenticatedUserRateThrottle(UserRateThrottle):
     """
 
     scope = "user"
+
+
+class BillingRateThrottle(UserRateThrottle):
+    """
+    Strict rate limit for billing/checkout endpoints.
+
+    Protects against billing abuse, repeated failed transactions,
+    and accidental duplicate subscription attempts.
+    Default: 10 requests per hour per authenticated user.
+
+    Configure in settings.py:
+        REST_FRAMEWORK = {
+            'DEFAULT_THROTTLE_RATES': {
+                'billing': '10/hour',
+            }
+        }
+    """
+
+    scope = "billing"
