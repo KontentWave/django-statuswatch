@@ -23,5 +23,6 @@ urlpatterns = [
     path("api/", include("api.urls")),
     # Payment endpoints
     path("api/pay/", include("payments.urls")),
+    path("api/billing/", include("payments.billing_urls")),
     path("", home),
 ]

@@ -13,6 +13,7 @@ urlpatterns = [
     # API endpoints
     path("api/", include("api.urls")),
     path("api/pay/", include("payments.urls")),
+    path("api/billing/", include("payments.billing_urls")),
     path("api/", include("monitors.urls")),
 ]
 

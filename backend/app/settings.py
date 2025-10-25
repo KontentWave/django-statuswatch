@@ -219,6 +219,7 @@ PENDING_REQUEUE_GRACE_SECONDS = env.int("PENDING_REQUEUE_GRACE_SECONDS", default
 # -------------------------------------------------------------------
 STRIPE_PUBLIC_KEY = env("STRIPE_PUBLIC_KEY", default="")
 STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PRO_PRICE_ID = env("STRIPE_PRO_PRICE_ID", default="")
 
 # Validate Stripe keys in production
 if not DEBUG:
@@ -587,6 +588,14 @@ LOGGING = {
             "backupCount": 5,
             "formatter": "verbose",
         },
+        "file_payments": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "payments.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
     },
     "loggers": {
         "django": {
@@ -616,6 +625,11 @@ LOGGING = {
         },
         "payments": {
             "handlers": ["console", "file_app"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments.checkout": {
+            "handlers": ["console", "file_payments"],
             "level": "INFO",
             "propagate": False,
         },
