@@ -61,12 +61,11 @@ select = [
 ignore = [
     "E501",  # line too long (handled by black)
     "B008",  # do not perform function calls in argument defaults
-    "B904",  # raise from
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
-"*/tests/*.py" = ["B011", "B007", "E731"]   # Allow assert False, unused loop vars, lambdas
+"*/tests/*.py" = ["S101", "B011", "B007", "E731"]   # Allow asserts in tests, assert False, unused loop vars, lambdas
 "*/scripts/*.py" = ["E402"] # Allow imports not at top in scripts (Django requires setup before imports)
 "backend/api/exception_handler.py" = ["UP038"]  # Keep tuple isinstance for readability
 "backend/api/password_validators.py" = ["UP031"]  # Keep % formatting for Django i18n

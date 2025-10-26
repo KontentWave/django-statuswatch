@@ -55,7 +55,7 @@ class EndpointSerializer(serializers.ModelSerializer):
         try:
             parsed = urlparse(value)
         except Exception:
-            raise serializers.ValidationError("Invalid URL format.")
+            raise serializers.ValidationError("Invalid URL format.") from None
 
         # Only allow http and https schemes
         if parsed.scheme not in ("http", "https"):

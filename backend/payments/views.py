@@ -76,7 +76,7 @@ def create_checkout_session(request):
         )
         raise InvalidPaymentMethodError(
             "Your payment method was declined. Please try a different payment method."
-        )
+        ) from e
 
     except stripe_error.InvalidRequestError as e:
         # Invalid parameters
@@ -88,7 +88,7 @@ def create_checkout_session(request):
                 "currency": currency,
             },
         )
-        raise PaymentProcessingError()
+        raise PaymentProcessingError() from e
 
     except stripe_error.AuthenticationError as e:
         # Authentication with Stripe failed
@@ -96,7 +96,7 @@ def create_checkout_session(request):
             sanitize_log_value(f"Stripe authentication error: {str(e)}"),
             exc_info=settings.DEBUG,
         )
-        raise ConfigurationError("Payment system authentication failed.")
+        raise ConfigurationError("Payment system authentication failed.") from e
 
     except stripe_error.APIConnectionError as e:
         # Network communication failed
@@ -106,7 +106,7 @@ def create_checkout_session(request):
         )
         raise PaymentProcessingError(
             "Unable to connect to payment processor. Please try again later."
-        )
+        ) from e
 
     except stripe_error.StripeError as e:
         # Generic Stripe error
@@ -114,7 +114,7 @@ def create_checkout_session(request):
             sanitize_log_value(f"Stripe error for user {request.user.id}: {str(e)}"),
             exc_info=settings.DEBUG,
         )
-        raise PaymentProcessingError()
+        raise PaymentProcessingError() from e
 
     except Exception as e:
         # Non-Stripe error
@@ -123,7 +123,7 @@ def create_checkout_session(request):
             exc_info=settings.DEBUG,
             extra={"user": request.user.id},
         )
-        raise PaymentProcessingError()
+        raise PaymentProcessingError() from e
 
 
 class BillingCheckoutSessionView(APIView):
@@ -252,7 +252,7 @@ class BillingCheckoutSessionView(APIView):
             checkout_logger.warning(sanitized_message, extra=extra_payload)
             raise InvalidPaymentMethodError(
                 "Your payment method was declined. Please try a different payment method."
-            )
+            ) from e
 
         except stripe_error.InvalidRequestError as e:
             sanitized_message = sanitize_log_value(
@@ -273,7 +273,7 @@ class BillingCheckoutSessionView(APIView):
                 exc_info=settings.DEBUG,
                 extra=extra_payload,
             )
-            raise PaymentProcessingError()
+            raise PaymentProcessingError() from e
 
         except stripe_error.AuthenticationError as e:
             sanitized_message = sanitize_log_value(f"Stripe authentication error: {str(e)}")
@@ -292,7 +292,7 @@ class BillingCheckoutSessionView(APIView):
                 exc_info=settings.DEBUG,
                 extra=extra_payload,
             )
-            raise ConfigurationError("Payment system authentication failed.")
+            raise ConfigurationError("Payment system authentication failed.") from e
 
         except stripe_error.APIConnectionError as e:
             sanitized_message = sanitize_log_value(f"Stripe API connection error: {str(e)}")
@@ -313,7 +313,7 @@ class BillingCheckoutSessionView(APIView):
             )
             raise PaymentProcessingError(
                 "Unable to connect to payment processor. Please try again later."
-            )
+            ) from e
 
         except stripe_error.StripeError as e:
             sanitized_message = sanitize_log_value(
@@ -334,7 +334,7 @@ class BillingCheckoutSessionView(APIView):
                 exc_info=settings.DEBUG,
                 extra=extra_payload,
             )
-            raise PaymentProcessingError()
+            raise PaymentProcessingError() from e
 
         except Exception as e:  # noqa: BLE001
             sanitized_message = sanitize_log_value(
@@ -356,7 +356,7 @@ class BillingCheckoutSessionView(APIView):
                 exc_info=settings.DEBUG,
                 extra=extra_payload,
             )
-            raise PaymentProcessingError()
+            raise PaymentProcessingError() from e
 
 
 class StripeWebhookView(APIView):

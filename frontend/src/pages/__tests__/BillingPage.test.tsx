@@ -92,8 +92,19 @@ describe("BillingPage", () => {
 
     expect(rememberCheckoutPlanMock).toHaveBeenCalledWith("pro");
 
+    // First call: config event on component mount (useEffect)
     expect(logBillingEventMock).toHaveBeenNthCalledWith(
       1,
+      expect.objectContaining({
+        event: "config",
+        phase: "completed",
+        plan: "free",
+      })
+    );
+
+    // Second call: checkout start when button clicked
+    expect(logBillingEventMock).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({
         event: "checkout",
         phase: "start",
@@ -101,9 +112,10 @@ describe("BillingPage", () => {
       })
     );
 
+    // Third call: checkout success after API response
     await waitFor(() => {
       expect(logBillingEventMock).toHaveBeenNthCalledWith(
-        2,
+        3,
         expect.objectContaining({
           event: "checkout",
           phase: "success",

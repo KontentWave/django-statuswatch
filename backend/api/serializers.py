@@ -157,8 +157,8 @@ class RegistrationSerializer(serializers.Serializer):
                         extra={"email": email, "schema_name": getattr(tenant, "schema_name", None)},
                     )
             if "email" in str(e).lower() or "username" in str(e).lower():
-                raise DuplicateEmailError("This email address is already registered.")
-            raise TenantCreationError()
+                raise DuplicateEmailError("This email address is already registered.") from e
+            raise TenantCreationError() from e
 
         except Exception as e:
             # Any other error during tenant creation
@@ -175,7 +175,7 @@ class RegistrationSerializer(serializers.Serializer):
                         "Failed to clean up tenant after unexpected error",
                         extra={"email": email, "schema_name": getattr(tenant, "schema_name", None)},
                     )
-            raise TenantCreationError()
+            raise TenantCreationError() from e
 
     # ------------------------------------------------------------------
     # Helpers
@@ -208,7 +208,7 @@ class RegistrationSerializer(serializers.Serializer):
             )
             raise SchemaConflictError(
                 "Failed to configure organization domain. Please try a different name."
-            )
+            ) from e
 
     def _create_owner_user(self, schema_name: str, email: str, password: str) -> None:
         from django.contrib.auth.models import Group
