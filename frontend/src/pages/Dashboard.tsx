@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
 
+import AppHeader from "@/components/AppHeader";
 import EndpointTable from "@/components/EndpointTable";
 import { fetchCurrentUser, submitLogout } from "@/lib/api";
 import { clearAuthTokens, getRefreshToken } from "@/lib/auth";
@@ -14,8 +15,11 @@ import {
   type EndpointListResponse,
 } from "@/lib/endpoint-client";
 import { logDashboardEvent } from "@/lib/dashboard-logger";
+import { logSubscriptionEvent } from "@/lib/subscription-logger";
+import { useSubscriptionStore } from "@/stores/subscription";
 
 const ENDPOINTS_QUERY_KEY = "endpoints";
+const FREE_PLAN_ENDPOINT_LIMIT = 3;
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -31,10 +35,16 @@ export default function DashboardPage() {
   );
   const [page, setPage] = useState(1);
   const pageSizeRef = useRef(0);
+  const gatingLoggedRef = useRef(false);
+  const subscriptionPlan = useSubscriptionStore((state) => state.plan);
+  const setSubscriptionPlan = useSubscriptionStore((state) => state.setPlan);
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["current-user"],
     queryFn: fetchCurrentUser,
     retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    staleTime: 0,
   });
   const endpointsQuery = useQuery<EndpointListResponse, Error>({
     queryKey: [ENDPOINTS_QUERY_KEY, page],
@@ -47,6 +57,24 @@ export default function DashboardPage() {
     refetchOnReconnect: true,
     staleTime: 0,
   });
+
+  useEffect(() => {
+    if (!data?.plan) {
+      return;
+    }
+
+    setSubscriptionPlan(data.plan);
+    void logSubscriptionEvent({
+      event: "gating",
+      action: "hydrate",
+      plan: data.plan,
+    });
+  }, [data?.plan, setSubscriptionPlan]);
+
+  const activePlan = data?.plan ?? subscriptionPlan;
+  const totalCount = endpointsQuery.data?.count ?? 0;
+  const hasReachedFreeLimit =
+    activePlan === "free" && totalCount >= FREE_PLAN_ENDPOINT_LIMIT;
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
@@ -147,7 +175,13 @@ export default function DashboardPage() {
     logoutMutation.mutate();
   };
 
-  const handleViewBilling = () => {
+  const navigateToBilling = (source: "header" | "gating") => {
+    void logSubscriptionEvent({
+      event: "gating",
+      action: "cta_click",
+      plan: activePlan,
+      source,
+    });
     void navigate({ to: "/billing" });
   };
 
@@ -165,6 +199,20 @@ export default function DashboardPage() {
     event.preventDefault();
     if (!endpointForm.url.trim()) {
       setEndpointFormError("Endpoint URL is required.");
+      return;
+    }
+    if (hasReachedFreeLimit) {
+      setEndpointFormError(
+        "You have reached the Free plan limit. Upgrade to Pro to add more endpoints."
+      );
+      void logSubscriptionEvent({
+        event: "gating",
+        action: "cta_click",
+        plan: activePlan,
+        source: "form_blocked",
+        totalCount,
+        limit: FREE_PLAN_ENDPOINT_LIMIT,
+      });
       return;
     }
     setEndpointFormError(null);
@@ -190,6 +238,23 @@ export default function DashboardPage() {
     pageSizeRef.current = endpointRows.length;
   }
 
+  useEffect(() => {
+    if (hasReachedFreeLimit && !gatingLoggedRef.current) {
+      gatingLoggedRef.current = true;
+      void logSubscriptionEvent({
+        event: "gating",
+        action: "limit_reached",
+        plan: activePlan,
+        totalCount,
+        limit: FREE_PLAN_ENDPOINT_LIMIT,
+      });
+    }
+
+    if (!hasReachedFreeLimit) {
+      gatingLoggedRef.current = false;
+    }
+  }, [hasReachedFreeLimit, activePlan, totalCount]);
+
   const totalPages = useMemo(() => {
     if (!endpointsQuery.data) {
       return 1;
@@ -199,7 +264,6 @@ export default function DashboardPage() {
     return Math.max(1, Math.ceil(endpointsQuery.data.count / pageSize));
   }, [endpointRows.length, endpointsQuery.data]);
 
-  const totalCount = endpointsQuery.data?.count ?? 0;
   const hasNextPage = Boolean(endpointsQuery.data?.next) || page < totalPages;
   const hasPreviousPage = page > 1;
   const endpointsErrorMessage = endpointsQuery.isError
@@ -226,195 +290,209 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Welcome back! Your workspace data will appear here soon.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleViewBilling}
-            className="inline-flex items-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
-            Manage Billing
-          </button>
-          <button
-            type="button"
-            onClick={handleLogout}
-            disabled={logoutMutation.isPending}
-            className="inline-flex items-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {logoutMutation.isPending ? "Logging out…" : "Log Out"}
-          </button>
-        </div>
-      </header>
-
-      {isLoading && (
-        <section className="rounded border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Loading your profile…</p>
+    <div className="mx-auto max-w-3xl space-y-4 pb-6">
+      <AppHeader
+        onManageBilling={() => navigateToBilling("header")}
+        onLogout={handleLogout}
+        logoutPending={logoutMutation.isPending}
+      />
+      <main className="space-y-4 px-6">
+        <section className="flex flex-col gap-2 text-sm text-muted-foreground">
+          <h1 className="text-2xl font-semibold text-foreground">Dashboard</h1>
+          <p>Welcome back! Your workspace data will appear here soon.</p>
         </section>
-      )}
 
-      {logoutError && (
-        <section className="rounded border border-red-200 bg-red-50 p-4">
-          <p className="text-sm text-red-600">{logoutError}</p>
-        </section>
-      )}
-
-      {!isLoading && data && (
-        <section className="space-y-3 rounded border border-border bg-card p-4">
-          <div>
-            <h2 className="text-lg font-semibold">Account</h2>
+        {isLoading && (
+          <section className="rounded border border-border bg-card p-4">
             <p className="text-sm text-muted-foreground">
-              You are signed in as{" "}
-              <span className="font-medium">{data.email}</span>.
+              Loading your profile…
             </p>
-          </div>
-          <dl className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">
+          </section>
+        )}
+
+        {logoutError && (
+          <section className="rounded border border-red-200 bg-red-50 p-4">
+            <p className="text-sm text-red-600">{logoutError}</p>
+          </section>
+        )}
+
+        {!isLoading && data && (
+          <section className="space-y-3 rounded border border-border bg-card p-4">
             <div>
-              <dt className="font-semibold text-foreground">Username</dt>
-              <dd>{data.username}</dd>
+              <h2 className="text-lg font-semibold">Account</h2>
+              <p className="text-sm text-muted-foreground">
+                You are signed in as{" "}
+                <span className="font-medium">{data.email}</span>.
+              </p>
             </div>
-            <div>
-              <dt className="font-semibold text-foreground">Joined</dt>
-              <dd>{new Date(data.date_joined).toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt className="font-semibold text-foreground">Groups</dt>
-              <dd>{data.groups.length ? data.groups.join(", ") : "None"}</dd>
-            </div>
-            <div>
-              <dt className="font-semibold text-foreground">Staff</dt>
-              <dd>{data.is_staff ? "Yes" : "No"}</dd>
-            </div>
-          </dl>
-        </section>
-      )}
+            <dl className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">
+              <div>
+                <dt className="font-semibold text-foreground">Username</dt>
+                <dd>{data.username}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-foreground">Joined</dt>
+                <dd>{new Date(data.date_joined).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-foreground">Groups</dt>
+                <dd>{data.groups.length ? data.groups.join(", ") : "None"}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-foreground">Staff</dt>
+                <dd>{data.is_staff ? "Yes" : "No"}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-foreground">Plan</dt>
+                <dd className="capitalize">{activePlan}</dd>
+              </div>
+            </dl>
+          </section>
+        )}
 
-      {isError && !isLoading && (
-        <section className="rounded border border-red-200 bg-red-50 p-4">
-          <p className="text-sm text-red-600">
-            {(error as Error)?.message ?? "Unable to load your account."}
-          </p>
-        </section>
-      )}
-
-      <section className="space-y-4 rounded border border-border bg-card p-4">
-        <div className="space-y-2">
-          <h2 className="text-lg font-semibold">Monitored Endpoints</h2>
-          <p className="text-sm text-muted-foreground">
-            Track health checks for URLs in your organization.
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void endpointsQuery.refetch();
-              }}
-              disabled={endpointsQuery.isFetching}
-              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {endpointsQuery.isFetching ? "Refreshing…" : "Refresh"}
-            </button>
-            <span className="text-xs text-muted-foreground">
-              Updated{" "}
-              {endpointsQuery.dataUpdatedAt
-                ? new Date(endpointsQuery.dataUpdatedAt).toLocaleTimeString()
-                : "just now"}
-            </span>
-          </div>
-        </div>
-
-        <EndpointTable
-          rows={endpointRows}
-          page={page}
-          totalPages={totalPages}
-          totalCount={totalCount}
-          isLoading={endpointsQuery.isLoading}
-          isFetching={endpointsQuery.isFetching}
-          isError={endpointsQuery.isError}
-          isSuccess={endpointsQuery.isSuccess}
-          errorMessage={endpointsErrorMessage}
-          hasNextPage={hasNextPage}
-          hasPreviousPage={hasPreviousPage}
-          onPageChange={handleChangePage}
-          onDelete={handleDeleteEndpoint}
-          pendingDeleteId={deletePendingId}
-          isDeletePending={deleteEndpointMutation.isPending}
-        />
-
-        <form className="space-y-3" onSubmit={handleCreateEndpoint}>
-          <h3 className="text-sm font-semibold text-foreground">
-            Add Endpoint
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1 text-sm">
-              <span className="font-medium text-foreground">
-                Name (optional)
-              </span>
-              <input
-                type="text"
-                name="name"
-                value={endpointForm.name}
-                onChange={handleEndpointInputChange}
-                placeholder="Billing API"
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              />
-            </label>
-            <label className="space-y-1 text-sm sm:col-span-2">
-              <span className="font-medium text-foreground">URL</span>
-              <input
-                type="url"
-                name="url"
-                required
-                value={endpointForm.url}
-                onChange={handleEndpointInputChange}
-                placeholder="https://example.com/health"
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="font-medium text-foreground">
-                Interval (minutes)
-              </span>
-              <input
-                type="number"
-                min={1}
-                max={24 * 60}
-                step={1}
-                name="interval_minutes"
-                value={endpointForm.interval_minutes}
-                onChange={handleEndpointInputChange}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              />
-            </label>
-          </div>
-
-          {endpointFormError && (
-            <p className="text-sm text-red-600">{endpointFormError}</p>
-          )}
-
-          {createEndpointMutation.isError && !endpointFormError && (
+        {isError && !isLoading && (
+          <section className="rounded border border-red-200 bg-red-50 p-4">
             <p className="text-sm text-red-600">
-              We could not save the endpoint.
+              {(error as Error)?.message ?? "Unable to load your account."}
             </p>
-          )}
+          </section>
+        )}
 
-          <div className="flex items-center justify-end gap-2">
-            <button
-              type="submit"
-              disabled={createEndpointMutation.isPending}
-              className="inline-flex items-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {createEndpointMutation.isPending ? "Adding…" : "Add Endpoint"}
-            </button>
+        <section className="space-y-4 rounded border border-border bg-card p-4">
+          <div className="space-y-2">
+            <h2 className="text-lg font-semibold">Monitored Endpoints</h2>
+            <p className="text-sm text-muted-foreground">
+              Track health checks for URLs in your organization.
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void endpointsQuery.refetch();
+                }}
+                disabled={endpointsQuery.isFetching}
+                className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {endpointsQuery.isFetching ? "Refreshing…" : "Refresh"}
+              </button>
+              <span className="text-xs text-muted-foreground">
+                Updated{" "}
+                {endpointsQuery.dataUpdatedAt
+                  ? new Date(endpointsQuery.dataUpdatedAt).toLocaleTimeString()
+                  : "just now"}
+              </span>
+            </div>
           </div>
-        </form>
-      </section>
+
+          <EndpointTable
+            rows={endpointRows}
+            page={page}
+            totalPages={totalPages}
+            totalCount={totalCount}
+            isLoading={endpointsQuery.isLoading}
+            isFetching={endpointsQuery.isFetching}
+            isError={endpointsQuery.isError}
+            isSuccess={endpointsQuery.isSuccess}
+            errorMessage={endpointsErrorMessage}
+            hasNextPage={hasNextPage}
+            hasPreviousPage={hasPreviousPage}
+            onPageChange={handleChangePage}
+            onDelete={handleDeleteEndpoint}
+            pendingDeleteId={deletePendingId}
+            isDeletePending={deleteEndpointMutation.isPending}
+          />
+
+          <form className="space-y-3" onSubmit={handleCreateEndpoint}>
+            <h3 className="text-sm font-semibold text-foreground">
+              Add Endpoint
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-sm">
+                <span className="font-medium text-foreground">
+                  Name (optional)
+                </span>
+                <input
+                  type="text"
+                  name="name"
+                  value={endpointForm.name}
+                  onChange={handleEndpointInputChange}
+                  placeholder="Billing API"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={hasReachedFreeLimit}
+                />
+              </label>
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="font-medium text-foreground">URL</span>
+                <input
+                  type="url"
+                  name="url"
+                  required
+                  value={endpointForm.url}
+                  onChange={handleEndpointInputChange}
+                  placeholder="https://example.com/health"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={hasReachedFreeLimit}
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="font-medium text-foreground">
+                  Interval (minutes)
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  max={24 * 60}
+                  step={1}
+                  name="interval_minutes"
+                  value={endpointForm.interval_minutes}
+                  onChange={handleEndpointInputChange}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={hasReachedFreeLimit}
+                />
+              </label>
+            </div>
+
+            {endpointFormError && (
+              <p className="text-sm text-red-600">{endpointFormError}</p>
+            )}
+
+            {createEndpointMutation.isError && !endpointFormError && (
+              <p className="text-sm text-red-600">
+                We could not save the endpoint.
+              </p>
+            )}
+
+            {hasReachedFreeLimit ? (
+              <div className="flex flex-col items-start justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 sm:flex-row sm:items-center">
+                <p>
+                  You have reached the Free plan limit of{" "}
+                  {FREE_PLAN_ENDPOINT_LIMIT} endpoints. Upgrade to unlock
+                  unlimited monitoring.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigateToBilling("gating")}
+                  className="inline-flex items-center rounded-md border border-transparent bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+                >
+                  Upgrade to Pro
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="submit"
+                  disabled={createEndpointMutation.isPending}
+                  className="inline-flex items-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {createEndpointMutation.isPending
+                    ? "Adding…"
+                    : "Add Endpoint"}
+                </button>
+              </div>
+            )}
+          </form>
+        </section>
+      </main>
     </div>
   );
 }

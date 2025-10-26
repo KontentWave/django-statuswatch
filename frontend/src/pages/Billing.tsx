@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 
@@ -6,6 +6,8 @@ import { createBillingCheckoutSession } from "@/lib/billing-client";
 import { logBillingEvent } from "@/lib/billing-logger";
 import { redirectTo } from "@/lib/navigation";
 import { clearCheckoutPlan, rememberCheckoutPlan } from "@/lib/billing-storage";
+import { logSubscriptionEvent } from "@/lib/subscription-logger";
+import { useSubscriptionStore } from "@/stores/subscription";
 
 const proPlanFeatures = [
   "Unlimited monitored endpoints",
@@ -24,6 +26,34 @@ export default function BillingPage() {
   const navigate = useNavigate();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const subscriptionPlan = useSubscriptionStore((state) => state.plan);
+
+  const planState = useMemo(() => {
+    switch (subscriptionPlan) {
+      case "pro":
+        return {
+          statusLabel: "Pro plan active",
+          freeCardMessage:
+            "Your workspace has already upgraded from this plan.",
+          proButtonLabel: "Current Plan",
+          canUpgrade: false,
+        } as const;
+      case "canceled":
+        return {
+          statusLabel: "Subscription canceled",
+          freeCardMessage: "You are currently viewing the fallback free tier.",
+          proButtonLabel: "Re-activate Pro",
+          canUpgrade: true,
+        } as const;
+      default:
+        return {
+          statusLabel: "Free plan active",
+          freeCardMessage: "You are currently on this plan.",
+          proButtonLabel: "Upgrade to Pro",
+          canUpgrade: true,
+        } as const;
+    }
+  }, [subscriptionPlan]);
 
   const upgradeMutation = useMutation({
     mutationFn: () => createBillingCheckoutSession("pro"),
@@ -73,6 +103,23 @@ export default function BillingPage() {
   };
 
   const showBusyState = upgradeMutation.isPending || isRedirecting;
+  const disableUpgradeCta = showBusyState || !planState.canUpgrade;
+
+  useEffect(() => {
+    void logBillingEvent({
+      event: "config",
+      phase: "completed",
+      plan: subscriptionPlan,
+      source: "billing-page",
+      message: "Detected current subscription state",
+    });
+    void logSubscriptionEvent({
+      event: "plan_change",
+      action: "state_detected",
+      plan: subscriptionPlan,
+      source: "billing-page",
+    });
+  }, [subscriptionPlan]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -82,6 +129,9 @@ export default function BillingPage() {
           <p className="text-sm text-muted-foreground">
             Choose the plan that fits your organization. Upgrade to unlock
             advanced monitoring and priority support.
+          </p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {planState.statusLabel}
           </p>
         </div>
         <button
@@ -108,7 +158,7 @@ export default function BillingPage() {
             </ul>
           </div>
           <p className="mt-4 text-sm text-muted-foreground">
-            You are currently on this plan.
+            {planState.freeCardMessage}
           </p>
         </article>
 
@@ -130,10 +180,10 @@ export default function BillingPage() {
           <button
             type="button"
             onClick={handleUpgradeClick}
-            disabled={showBusyState}
+            disabled={disableUpgradeCta}
             className="mt-4 inline-flex items-center justify-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {showBusyState ? "Redirecting…" : "Upgrade to Pro"}
+            {showBusyState ? "Redirecting…" : planState.proButtonLabel}
           </button>
         </article>
       </section>

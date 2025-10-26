@@ -3,8 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
+import type { ReactNode } from "react";
 
 import DashboardPage from "@/pages/Dashboard";
+import { resetSubscriptionStore } from "@/stores/subscription";
 
 const {
   fetchCurrentUserMock,
@@ -16,6 +18,7 @@ const {
   createEndpointMock,
   deleteEndpointMock,
   logDashboardEventMock,
+  logSubscriptionEventMock,
 } = vi.hoisted(() => ({
   fetchCurrentUserMock: vi.fn(),
   submitLogoutMock: vi.fn(),
@@ -26,7 +29,15 @@ const {
   createEndpointMock: vi.fn(),
   deleteEndpointMock: vi.fn(),
   logDashboardEventMock: vi.fn(),
+  logSubscriptionEventMock: vi.fn<(...args: unknown[]) => Promise<void>>(() =>
+    Promise.resolve()
+  ),
 }));
+
+type MockLinkProps = {
+  to?: string;
+  children: ReactNode;
+} & Record<string, unknown>;
 
 vi.mock("@/lib/api", () => ({
   fetchCurrentUser: () => fetchCurrentUserMock(),
@@ -40,6 +51,15 @@ vi.mock("@tanstack/react-router", async () => {
   return {
     ...actual,
     useNavigate: () => navigateMock,
+    Link: ({ to, children, ...rest }: MockLinkProps) => (
+      <a
+        data-mock-link
+        href={typeof to === "string" ? to : undefined}
+        {...rest}
+      >
+        {children}
+      </a>
+    ),
   };
 });
 
@@ -56,6 +76,10 @@ vi.mock("@/lib/endpoint-client", () => ({
 
 vi.mock("@/lib/dashboard-logger", () => ({
   logDashboardEvent: (payload: unknown) => logDashboardEventMock(payload),
+}));
+
+vi.mock("@/lib/subscription-logger", () => ({
+  logSubscriptionEvent: (payload: unknown) => logSubscriptionEventMock(payload),
 }));
 
 function renderDashboard() {
@@ -76,6 +100,7 @@ function renderDashboard() {
 
 describe("DashboardPage", () => {
   beforeEach(() => {
+    resetSubscriptionStore();
     fetchCurrentUserMock.mockReset();
     submitLogoutMock.mockReset();
     navigateMock.mockReset();
@@ -86,6 +111,8 @@ describe("DashboardPage", () => {
     createEndpointMock.mockReset();
     deleteEndpointMock.mockReset();
     logDashboardEventMock.mockReset();
+    logSubscriptionEventMock.mockReset();
+    logSubscriptionEventMock.mockImplementation(() => Promise.resolve());
     listEndpointsMock.mockResolvedValue({
       count: 0,
       next: null,
@@ -104,6 +131,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     renderDashboard();
@@ -162,6 +190,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     submitLogoutMock.mockResolvedValue({});
@@ -201,6 +230,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     submitLogoutMock.mockRejectedValue(new Error("Server unavailable"));
@@ -230,6 +260,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     listEndpointsMock.mockResolvedValue({
@@ -280,6 +311,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     renderDashboard();
@@ -292,6 +324,12 @@ describe("DashboardPage", () => {
     await user.click(screen.getByRole("button", { name: /manage billing/i }));
 
     expect(navigateMock).toHaveBeenCalledWith({ to: "/billing" });
+    expect(logSubscriptionEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "cta_click",
+        source: "header",
+      })
+    );
   });
 
   it("logs pagination events when changing pages", async () => {
@@ -304,6 +342,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     const firstPage = {
@@ -422,6 +461,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     listEndpointsMock
@@ -510,6 +550,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     listEndpointsMock
@@ -570,6 +611,119 @@ describe("DashboardPage", () => {
     );
   });
 
+  it("disables the add endpoint form when the free plan limit is reached", async () => {
+    fetchCurrentUserMock.mockResolvedValue({
+      id: 1,
+      username: "tony",
+      email: "tony@stark.com",
+      first_name: "Tony",
+      last_name: "Stark",
+      is_staff: false,
+      date_joined: "2025-01-01T12:00:00Z",
+      groups: ["Owner"],
+      plan: "free",
+    });
+
+    const endpoints = Array.from({ length: 3 }, (_, index) => ({
+      id: `ep-${index + 1}`,
+      name: `Service ${index + 1}`,
+      url: `https://example.com/service-${index + 1}`,
+      interval_minutes: 5,
+      last_status: "ok",
+      last_checked_at: "2025-10-22T10:00:00Z",
+      last_latency_ms: 120,
+      last_enqueued_at: "2025-10-22T10:01:00Z",
+      created_at: "2025-10-22T09:00:00Z",
+      updated_at: "2025-10-22T10:01:00Z",
+    }));
+
+    listEndpointsMock.mockResolvedValue({
+      count: 3,
+      next: null,
+      previous: null,
+      results: endpoints,
+    });
+
+    renderDashboard();
+
+    expect(
+      await screen.findByText(/free plan limit of 3 endpoints/i)
+    ).toBeInTheDocument();
+
+    expect(screen.getByLabelText(/url/i)).toBeDisabled();
+    expect(screen.getByLabelText(/name \(optional\)/i)).toBeDisabled();
+    expect(screen.getByLabelText(/interval \(minutes\)/i)).toBeDisabled();
+
+    const upgradeButton = screen.getByRole("button", {
+      name: /upgrade to pro/i,
+    });
+
+    await waitFor(() =>
+      expect(logSubscriptionEventMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "limit_reached",
+          plan: "free",
+          totalCount: 3,
+        })
+      )
+    );
+
+    const user = userEvent.setup();
+    await user.click(upgradeButton);
+
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/billing" });
+    expect(logSubscriptionEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "cta_click",
+        source: "gating",
+      })
+    );
+  });
+
+  it("keeps the add endpoint form active for pro plan tenants", async () => {
+    fetchCurrentUserMock.mockResolvedValue({
+      id: 1,
+      username: "pepper",
+      email: "pepper@stark.com",
+      first_name: "Pepper",
+      last_name: "Potts",
+      is_staff: false,
+      date_joined: "2025-02-01T12:00:00Z",
+      groups: ["Owner"],
+      plan: "pro",
+    });
+
+    listEndpointsMock.mockResolvedValue({
+      count: 5,
+      next: null,
+      previous: null,
+      results: [
+        {
+          id: "ep-1",
+          name: "API",
+          url: "https://example.com/health",
+          interval_minutes: 5,
+          last_status: "ok",
+          last_checked_at: "2025-10-22T10:00:00Z",
+          last_latency_ms: 120,
+          last_enqueued_at: "2025-10-22T10:01:00Z",
+          created_at: "2025-10-22T09:00:00Z",
+          updated_at: "2025-10-22T10:01:00Z",
+        },
+      ],
+    });
+
+    renderDashboard();
+
+    expect(await screen.findByText(/monitored endpoints/i)).toBeInTheDocument();
+    expect(await screen.findByText(/pro plan/i)).toBeInTheDocument();
+    expect(screen.queryByText(/free plan limit/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/url/i)).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /add endpoint/i })
+    ).not.toBeDisabled();
+  });
+
   it("shows create error feedback", async () => {
     fetchCurrentUserMock.mockResolvedValue({
       id: 1,
@@ -580,6 +734,7 @@ describe("DashboardPage", () => {
       is_staff: false,
       date_joined: "2025-01-01T12:00:00Z",
       groups: ["Owner"],
+      plan: "free",
     });
 
     const error = new Error("Validation failed");

@@ -3,7 +3,9 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
+from tenants.models import SubscriptionStatus
 
 from .models import Endpoint
 from .serializers import EndpointSerializer
@@ -11,6 +13,7 @@ from .tasks import ping_endpoint
 
 logger = logging.getLogger("monitors")
 audit_logger = logging.getLogger("monitors.audit")
+subscription_logger = logging.getLogger("subscriptions.feature_gating")
 
 
 class EndpointViewSet(viewsets.ModelViewSet):
@@ -38,6 +41,24 @@ class EndpointViewSet(viewsets.ModelViewSet):
         3. Database consistency maintained
         """
         tenant = getattr(self.request, "tenant", None)
+
+        if (
+            tenant
+            and getattr(tenant, "subscription_status", SubscriptionStatus.FREE)
+            == SubscriptionStatus.FREE
+        ):
+            existing_count = Endpoint.objects.filter(tenant=tenant).count()
+            if existing_count >= 3:
+                subscription_logger.info(
+                    "Free plan endpoint limit reached",
+                    extra={
+                        "tenant": getattr(tenant, "schema_name", "public"),
+                        "user_id": getattr(self.request.user, "id", None),
+                        "existing_endpoints": existing_count,
+                        "limit": 3,
+                    },
+                )
+                raise PermissionDenied("Your 3-endpoint limit reached. Please upgrade to Pro.")
 
         with transaction.atomic():
             endpoint = serializer.save(tenant=tenant)

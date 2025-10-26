@@ -194,6 +194,7 @@ export interface CurrentUserResponse {
   is_staff: boolean;
   date_joined: string;
   groups: string[];
+  plan: "free" | "pro" | "canceled";
 }
 
 export async function fetchCurrentUser(): Promise<CurrentUserResponse> {

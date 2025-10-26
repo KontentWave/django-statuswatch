@@ -122,6 +122,7 @@ def test_me_endpoint_returns_user_data(stark_industries_tenant, test_user_with_g
     assert data["first_name"] == "Tony"
     assert data["last_name"] == "Stark"
     assert data["is_staff"] is False
+    assert data["plan"] == "free"
 
     # Verify date_joined is present and valid ISO format
     assert "date_joined" in data
@@ -182,6 +183,7 @@ def test_me_endpoint_user_without_groups(stark_industries_tenant):
 
     assert data["username"] == "pepper@starkindustries.com"
     assert data["groups"] == []
+    assert data["plan"] == "free"
 
 
 @override_settings(ALLOWED_HOSTS=["*"])
@@ -212,3 +214,4 @@ def test_me_endpoint_staff_user(stark_industries_tenant):
 
     assert data["username"] == "jarvis@starkindustries.com"
     assert data["is_staff"] is True
+    assert data["plan"] == "free"

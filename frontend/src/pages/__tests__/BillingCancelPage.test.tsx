@@ -4,20 +4,37 @@ import userEvent from "@testing-library/user-event";
 
 import BillingCancelPage from "@/pages/BillingCancel";
 
+const LOG_FILE_PATH = `${process.cwd()}/logs/billing-events.log`;
+
 const {
   logBillingEventMock,
   navigateMock,
   consumeCheckoutPlanMock,
   locationSearchRef,
-} = vi.hoisted(() => ({
-  logBillingEventMock: vi.fn(async (...args: unknown[]) => {
-    void args;
+  persistBillingLog,
+} = vi.hoisted(() => {
+  const persistBillingLog = async (payload: unknown) => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    await fs.mkdir(path.dirname(LOG_FILE_PATH), { recursive: true });
+    await fs.appendFile(
+      LOG_FILE_PATH,
+      `${JSON.stringify({ test: "billing-cancel", payload })}\n`,
+      { encoding: "utf8" }
+    );
     return undefined;
-  }),
-  navigateMock: vi.fn(),
-  consumeCheckoutPlanMock: vi.fn(),
-  locationSearchRef: { current: "?reason=user_canceled&session_id=cs_cancel" },
-}));
+  };
+
+  return {
+    logBillingEventMock: vi.fn(persistBillingLog),
+    navigateMock: vi.fn(),
+    consumeCheckoutPlanMock: vi.fn(),
+    locationSearchRef: {
+      current: "?session_id=cs_cancel&reason=user_canceled",
+    },
+    persistBillingLog,
+  };
+});
 
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
@@ -52,14 +69,59 @@ vi.mock("@/lib/billing-storage", () => ({
   consumeCheckoutPlan: () => consumeCheckoutPlanMock(),
 }));
 
+function mockImmediateTimeouts() {
+  const callbacks: Array<(() => void) | null> = [];
+  const schedule =
+    typeof queueMicrotask === "function"
+      ? queueMicrotask
+      : (callback: () => void) => {
+          void Promise.resolve().then(callback);
+        };
+
+  const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    handler: TimerHandler,
+    timeout?: number,
+    ...args: unknown[]
+  ) => {
+    void timeout;
+    const index =
+      callbacks.push(() => {
+        if (typeof handler === "function") {
+          (handler as (...cbArgs: unknown[]) => void)(...args);
+        }
+      }) - 1;
+    schedule(() => {
+      const callback = callbacks[index];
+      if (callback) {
+        callbacks[index] = null;
+        callback();
+      }
+    });
+    return (index + 1) as unknown as ReturnType<typeof globalThis.setTimeout>;
+  }) as unknown as typeof globalThis.setTimeout);
+
+  const clearTimeoutSpy = vi
+    .spyOn(globalThis, "clearTimeout")
+    .mockImplementation(((
+      identifier: ReturnType<typeof globalThis.setTimeout>
+    ) => {
+      const index = Number(identifier) - 1;
+      if (index >= 0 && index < callbacks.length) {
+        callbacks[index] = null;
+      }
+    }) as unknown as typeof globalThis.clearTimeout);
+
+  return { setTimeoutSpy, clearTimeoutSpy };
+}
+
 describe("BillingCancelPage", () => {
   beforeEach(() => {
-    logBillingEventMock.mockReset();
-    logBillingEventMock.mockResolvedValue(undefined);
+    logBillingEventMock.mockImplementation(persistBillingLog);
+    logBillingEventMock.mockClear();
     navigateMock.mockReset();
     consumeCheckoutPlanMock.mockReset();
     consumeCheckoutPlanMock.mockReturnValue("pro");
-    locationSearchRef.current = "?reason=user_canceled&session_id=cs_cancel";
+    locationSearchRef.current = "?session_id=cs_cancel&reason=user_canceled";
   });
 
   it("logs cancellation details with context", async () => {
@@ -73,6 +135,7 @@ describe("BillingCancelPage", () => {
           plan: "pro",
           sessionId: "cs_cancel",
           message: expect.stringMatching(/user_canceled/i),
+          cancellationReason: "user_canceled",
           source: "billing-cancel-page",
         })
       );
@@ -81,10 +144,14 @@ describe("BillingCancelPage", () => {
     expect(
       screen.getByRole("heading", { name: /checkout canceled/i })
     ).toBeInTheDocument();
-    expect(screen.getByText(/user_canceled/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/stripe reported: user_canceled/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/reference session id/i)).toBeInTheDocument();
   });
 
-  it("handles missing parameters", async () => {
+  it("handles missing parameters by redirecting", async () => {
+    const { setTimeoutSpy, clearTimeoutSpy } = mockImmediateTimeouts();
     locationSearchRef.current = "";
     consumeCheckoutPlanMock.mockReturnValue("unknown");
 
@@ -93,12 +160,23 @@ describe("BillingCancelPage", () => {
     await waitFor(() => {
       expect(logBillingEventMock).toHaveBeenCalledWith(
         expect.objectContaining({
+          redirectScheduled: true,
+          sessionId: undefined,
           message: expect.stringMatching(/canceled the stripe checkout flow/i),
         })
       );
     });
 
-    expect(screen.getByText(/no additional information/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/could not find a recent checkout/i)
+    ).toBeInTheDocument();
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: "/billing",
+      replace: true,
+    });
+
+    setTimeoutSpy.mockRestore();
+    clearTimeoutSpy.mockRestore();
   });
 
   it("provides navigation actions", async () => {

@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenViewBase
+from tenants.models import SubscriptionStatus
 
 from .audit_log import AuditEvent, log_audit_event
 from .logging_utils import sanitize_log_value
@@ -54,7 +55,10 @@ class CurrentUserView(APIView):
             },
         )
         serializer = UserSerializer(request.user)
-        return Response(serializer.data)
+        data = dict(serializer.data)
+        plan = getattr(tenant, "subscription_status", SubscriptionStatus.FREE)
+        data["plan"] = plan
+        return Response(data)
 
 
 class RegistrationView(APIView):

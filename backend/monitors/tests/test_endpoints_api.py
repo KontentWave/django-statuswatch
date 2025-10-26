@@ -195,3 +195,58 @@ def test_endpoints_are_isolated_per_tenant(tenant_factory, auth_client_factory, 
 
     assert urls_a == {"https://tenant-a.example.com/health"}
     assert urls_b == {"https://tenant-b.example.com/health"}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_free_plan_cannot_create_more_than_three_endpoints(
+    tenant_factory, auth_client_factory, monkeypatch
+):
+    tenant = tenant_factory("Free Plan")
+    tenant.subscription_status = "free"
+    tenant.save(update_fields=["subscription_status"])
+
+    monkeypatch.setattr(
+        "monitors.views.ping_endpoint.delay", lambda endpoint_id, tenant_schema: None
+    )
+
+    client, _ = auth_client_factory(tenant, email="free-plan@example.com")
+
+    for index in range(3):
+        response = client.post(
+            "/api/endpoints/",
+            {"url": f"https://limit-{index}.example.com/health", "interval_minutes": 5},
+            format="json",
+        )
+        _log_response(f"Create endpoint {index}", response)
+        assert response.status_code == 201
+
+    fourth_response = client.post(
+        "/api/endpoints/",
+        {"url": "https://limit-3.example.com/health", "interval_minutes": 5},
+        format="json",
+    )
+    _log_response("Create endpoint 3", fourth_response)
+    assert fourth_response.status_code == 403
+    assert "upgrade" in fourth_response.json().get("detail", "").lower()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_pro_plan_can_create_additional_endpoints(tenant_factory, auth_client_factory, monkeypatch):
+    tenant = tenant_factory("Pro Plan")
+    tenant.subscription_status = "pro"
+    tenant.save(update_fields=["subscription_status"])
+
+    monkeypatch.setattr(
+        "monitors.views.ping_endpoint.delay", lambda endpoint_id, tenant_schema: None
+    )
+
+    client, _ = auth_client_factory(tenant, email="pro-plan@example.com")
+
+    for index in range(4):
+        response = client.post(
+            "/api/endpoints/",
+            {"url": f"https://pro-{index}.example.com/health", "interval_minutes": 5},
+            format="json",
+        )
+        _log_response(f"Pro create endpoint {index}", response)
+        assert response.status_code == 201

@@ -219,6 +219,7 @@ PENDING_REQUEUE_GRACE_SECONDS = env.int("PENDING_REQUEUE_GRACE_SECONDS", default
 STRIPE_PUBLIC_KEY = env("STRIPE_PUBLIC_KEY", default="")
 STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
 STRIPE_PRO_PRICE_ID = env("STRIPE_PRO_PRICE_ID", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 
 # Validate Stripe keys in production
 if not DEBUG:
@@ -248,6 +249,11 @@ if not DEBUG:
             raise ValueError(
                 "STRIPE_SECRET_KEY must be set and start with 'sk_' in production.\n"
                 "Get your keys from https://dashboard.stripe.com/apikeys"
+            )
+        if not STRIPE_WEBHOOK_SECRET or not STRIPE_WEBHOOK_SECRET.startswith("whsec_"):
+            raise ValueError(
+                "STRIPE_WEBHOOK_SECRET must be set and start with 'whsec_' in production.\n"
+                "Get your keys from https://dashboard.stripe.com/webhooks"
             )
 
 
@@ -582,6 +588,22 @@ LOGGING = {
             "backupCount": 5,
             "formatter": "verbose",
         },
+        "file_webhooks": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "webhooks.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
+        "file_subscriptions": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "subscriptions.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
     },
     "loggers": {
         "django": {
@@ -624,6 +646,16 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
+        "payments.webhooks": {
+            "handlers": ["console", "file_webhooks"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments.subscriptions": {
+            "handlers": ["console", "file_subscriptions"],
+            "level": "INFO",
+            "propagate": False,
+        },
         "api.auth": {
             "handlers": ["console", "file_app", "file_security"],
             "level": "INFO",
@@ -656,6 +688,11 @@ LOGGING = {
         },
         "monitors.performance": {
             "handlers": ["file_performance", "console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "subscriptions.feature_gating": {
+            "handlers": ["console", "file_subscriptions"],
             "level": "INFO",
             "propagate": False,
         },

@@ -11,10 +11,13 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from stripe import _error as stripe_error
+from tenants.models import Client, SubscriptionStatus
 
 logger = logging.getLogger(__name__)
 checkout_logger = logging.getLogger("payments.checkout")
 billing_logger = logging.getLogger("payments.billing")
+webhook_logger = logging.getLogger("payments.webhooks")
+subscription_logger = logging.getLogger("payments.subscriptions")
 
 
 @api_view(["GET"])
@@ -354,3 +357,179 @@ class BillingCheckoutSessionView(APIView):
                 extra=extra_payload,
             )
             raise PaymentProcessingError()
+
+
+class StripeWebhookView(APIView):
+    """Receive Stripe webhook events and synchronize tenant subscription state."""
+
+    authentication_classes: list[type] = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        secret = getattr(settings, "STRIPE_WEBHOOK_SECRET", "")
+        if not secret:
+            webhook_logger.error(
+                "Stripe webhook secret not configured",
+                extra={"event": "stripe_webhook", "status": "error", "reason": "missing_secret"},
+            )
+            raise ConfigurationError("Webhook secret is not configured.")
+
+        payload = request.body
+        signature = request.META.get("HTTP_STRIPE_SIGNATURE", "")
+
+        try:
+            event = stripe.Webhook.construct_event(payload, signature, secret)
+        except ValueError as exc:  # invalid payload
+            webhook_logger.warning(
+                "Stripe webhook payload could not be parsed",
+                extra={"event": "stripe_webhook", "status": "invalid_payload", "error": str(exc)},
+            )
+            return Response({"detail": "Invalid payload."}, status=status.HTTP_400_BAD_REQUEST)
+        except stripe_error.SignatureVerificationError as exc:
+            webhook_logger.warning(
+                "Stripe webhook signature verification failed",
+                extra={
+                    "event": "stripe_webhook",
+                    "status": "invalid_signature",
+                    "error": sanitize_log_value(str(exc)),
+                },
+            )
+            return Response({"detail": "Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:  # noqa: BLE001
+            webhook_logger.error(
+                "Unexpected error constructing Stripe webhook event",
+                extra={
+                    "event": "stripe_webhook",
+                    "status": "error",
+                    "error": sanitize_log_value(str(exc)),
+                },
+                exc_info=settings.DEBUG,
+            )
+            return Response(
+                {"detail": "Webhook processing failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return self._handle_event(event)
+
+    def _handle_event(self, event: dict):
+        event_type = event.get("type", "unknown")
+        event_id = event.get("id")
+        tenant_schema = self._extract_tenant_schema(event)
+        sanitized_schema = sanitize_log_value(tenant_schema or "")
+        session_id = event.get("data", {}).get("object", {}).get("id")
+        sanitized_session_id = sanitize_log_value(session_id or "")
+        sanitized_event_id = sanitize_log_value(event_id or "")
+
+        subscription_logger.info(
+            "Processing Stripe webhook event",
+            extra={
+                "event": "stripe_webhook",
+                "event_type": event_type,
+                "event_id": sanitized_event_id,
+                "tenant_schema": sanitized_schema,
+                "session_id": sanitized_session_id,
+                "status": "received",
+            },
+        )
+
+        if tenant_schema is None:
+            webhook_logger.warning(
+                "Stripe webhook missing tenant metadata",
+                extra={"event": "stripe_webhook", "status": "ignored", "event_type": event_type},
+            )
+            return Response(status=status.HTTP_202_ACCEPTED)
+
+        tenant = Client.objects.filter(schema_name=tenant_schema).first()
+        if tenant is None:
+            webhook_logger.warning(
+                "Stripe webhook tenant not found",
+                extra={
+                    "event": "stripe_webhook",
+                    "status": "ignored",
+                    "event_type": event_type,
+                    "tenant_schema": sanitized_schema,
+                },
+            )
+            return Response(status=status.HTTP_202_ACCEPTED)
+
+        if event_type in {"checkout.session.completed", "invoice.paid"}:
+            return self._update_subscription(
+                tenant,
+                SubscriptionStatus.PRO,
+                event_type,
+                event_id=event_id,
+                session_id=session_id,
+            )
+
+        if event_type == "customer.subscription.deleted":
+            return self._update_subscription(
+                tenant,
+                SubscriptionStatus.CANCELED,
+                event_type,
+                event_id=event_id,
+                session_id=session_id,
+            )
+
+        webhook_logger.info(
+            "Stripe webhook event ignored",
+            extra={
+                "event": "stripe_webhook",
+                "status": "ignored",
+                "event_type": event_type,
+                "tenant_schema": sanitized_schema,
+            },
+        )
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+    @staticmethod
+    def _extract_tenant_schema(event: dict) -> str | None:
+        data_object = event.get("data", {}).get("object", {}) or {}
+        metadata = data_object.get("metadata") or {}
+        tenant_schema = metadata.get("tenant_schema") or metadata.get("tenant")
+        return tenant_schema
+
+    def _update_subscription(
+        self,
+        tenant: Client,
+        new_status: SubscriptionStatus,
+        event_type: str,
+        event_id: str | None = None,
+        session_id: str | None = None,
+    ) -> Response:
+        previous_status = tenant.subscription_status
+        tenant.subscription_status = new_status
+        tenant.save(update_fields=["subscription_status"])
+
+        sanitized_event_id = sanitize_log_value(event_id or "")
+        sanitized_session_id = sanitize_log_value(session_id or "")
+        sanitized_schema = sanitize_log_value(tenant.schema_name)
+
+        subscription_logger.info(
+            "Subscription status updated",
+            extra={
+                "event": "subscription_update",
+                "event_type": event_type,
+                "event_id": sanitized_event_id,
+                "session_id": sanitized_session_id,
+                "tenant_schema": sanitized_schema,
+                "previous_status": previous_status,
+                "new_status": new_status,
+            },
+        )
+
+        webhook_logger.info(
+            "Stripe webhook updated subscription status",
+            extra={
+                "event": "stripe_webhook",
+                "status": "updated",
+                "event_type": event_type,
+                "tenant_schema": sanitized_schema,
+                "previous_status": previous_status,
+                "new_status": new_status,
+                "event_id": sanitized_event_id,
+                "session_id": sanitized_session_id,
+            },
+        )
+
+        return Response(status=status.HTTP_200_OK)

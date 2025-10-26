@@ -455,3 +455,40 @@ Here is a detailed breakdown of the features for Phase 2, focusing on commercial
 **Overall Phase 2 Status:** ✅ **Billing checkout complete, webhooks and subscription persistence next**
 
 ---
+
+### 5. Subscription Status & Feature Gating
+
+- **Action:** Automatically update a tenant's subscription status via Stripe webhooks and enforce plan limits within the application.
+- **Test Plan:**
+  - **Backend:** Test that a valid Stripe webhook event (e.g., `invoice.paid`) updates the tenant's `subscription_status`. Test that a Free user is blocked (e.g., HTTP 403) from creating a 4th endpoint.
+  - **Frontend:** Test that a Free user sees an "Upgrade" prompt when trying to add an endpoint beyond their limit. Test that a Pro user does not see this limit.
+
+#### **Frontend Tasks (React)**
+
+- Fetch the user's/tenant's current subscription status (e.g., `plan: 'free' | 'pro'`) from an existing API endpoint (like `/api/auth/me/`).
+- Store this plan status in a global state (e.g., **Zustand**).
+- Conditionally render UI elements based on the plan:
+  - Show a "Pro" badge in the navigation.
+  - If `plan === 'free'` and `endpoint_count >= 3`, disable the "Add Endpoint" form and show a "Please upgrade to add more endpoints" message.
+
+#### **Backend Tasks (Django)**
+
+- Add a `subscription_status` field (e.g., 'free', 'pro', 'canceled') to the `Tenant` model.
+- Create a public, unauthenticated API endpoint for `/api/billing/webhook/` to receive events from Stripe.
+- Implement webhook handler logic to:
+  1.  Verify the event signature using `STRIPE_WEBHOOK_SECRET`.
+  2.  Handle events like `checkout.session.completed`, `invoice.paid`, and `customer.subscription.deleted`.
+  3.  Find the corresponding `Tenant` and update its `subscription_status` field.
+- Modify the `EndpointViewSet`'s `create` method:
+  1.  Check the tenant's `subscription_status`.
+  2.  If the status is 'free', count their existing endpoints.
+  3.  If the count is 3 or more, return a `403 Permission Denied` response.
+
+---
+
+#### **Implementation Notes**
+
+- **Webhook processing:** `StripeWebhookView` in `backend/payments/views.py` now loads `STRIPE_WEBHOOK_SECRET`, verifies signatures, and updates `Client.subscription_status` for `checkout.session.completed`, `invoice.paid`, and `customer.subscription.deleted`. Structured telemetry (event id, session id, tenant schema, previous/new status) is emitted to the `payments.webhooks` and `payments.subscriptions` loggers, persisted in `logs/webhooks.log` and `logs/subscriptions.log`.
+- **Feature gating:** Endpoint creation continues to enforce the Free tier limit; tests in `backend/monitors/tests/test_endpoints_api.py` assert the 403 response for a fourth endpoint. New webhook tests in `backend/tests/test_billing_webhooks.py` cover promotion, cancellation, and signature failure scenarios.
+- **Plan hydration & UI:** The frontend hydrates the global subscription store from `/api/auth/me/`, surfaces the plan badge in `AppHeader`, gates endpoint creation with inline messaging, and logs gating events through `frontend/src/pages/Dashboard.tsx`.
+- **Billing surface:** `frontend/src/pages/Billing.tsx` now reflects the shared plan state—disabling the upgrade CTA for Pro tenants, updating copy for the Free card, and logging `config`/`state_detected` events (supported by a new action in `subscription-logger`). Manual webhook tests confirmed `/dashboard` and `/billing` stay synchronized after plan changes.

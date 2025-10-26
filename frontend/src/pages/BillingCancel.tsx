@@ -35,8 +35,26 @@ export default function BillingCancelPage() {
       sessionId,
       message,
       source: "billing-cancel-page",
+      redirectScheduled: !sessionId,
+      cancellationReason,
     });
   }, [selectedPlan, sessionId, cancellationReason]);
+
+  useEffect(() => {
+    if (sessionId) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void navigate({ to: "/billing", replace: true });
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [navigate, sessionId]);
 
   const planLabel = formatPlanLabel(selectedPlan);
 
@@ -64,7 +82,7 @@ export default function BillingCancelPage() {
         <p>
           {cancellationReason
             ? `Stripe reported: ${cancellationReason}`
-            : "No additional information was provided by Stripe."}
+            : "We could not find a recent checkout to cancel. You will be redirected back to billing shortly."}
         </p>
         {sessionId ? (
           <p className="mt-2 text-xs">
