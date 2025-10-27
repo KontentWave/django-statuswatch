@@ -36,7 +36,12 @@ def _post_webhook(payload: dict[str, Any], signature: str = "whsec_test"):
 def test_checkout_session_completed_promotes_tenant(mock_construct_event, tenant):
     payload = {
         "type": "checkout.session.completed",
-        "data": {"object": {"metadata": {"tenant_schema": tenant.schema_name}}},
+        "data": {
+            "object": {
+                "metadata": {"tenant_schema": tenant.schema_name},
+                "customer": "cus_test_123",
+            }
+        },
     }
     mock_construct_event.return_value = payload
 
@@ -45,6 +50,7 @@ def test_checkout_session_completed_promotes_tenant(mock_construct_event, tenant
     assert response.status_code == 200
     tenant.refresh_from_db()
     assert tenant.subscription_status == "pro"
+    assert tenant.stripe_customer_id == "cus_test_123"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -53,7 +59,12 @@ def test_checkout_session_completed_promotes_tenant(mock_construct_event, tenant
 def test_invoice_paid_promotes_tenant(mock_construct_event, tenant):
     payload = {
         "type": "invoice.paid",
-        "data": {"object": {"metadata": {"tenant_schema": tenant.schema_name}}},
+        "data": {
+            "object": {
+                "metadata": {"tenant_schema": tenant.schema_name},
+                "customer": "cus_test_123",
+            }
+        },
     }
     mock_construct_event.return_value = payload
 
@@ -62,26 +73,34 @@ def test_invoice_paid_promotes_tenant(mock_construct_event, tenant):
     assert response.status_code == 200
     tenant.refresh_from_db()
     assert tenant.subscription_status == "pro"
+    assert tenant.stripe_customer_id == "cus_test_123"
 
 
 @pytest.mark.django_db(transaction=True)
 @override_settings(STRIPE_WEBHOOK_SECRET="whsec_test")
 @patch("payments.views.stripe.Webhook.construct_event")
-def test_subscription_deleted_marks_tenant_cancelled(mock_construct_event, tenant):
+def test_subscription_deleted_downgrades_tenant_to_free(mock_construct_event, tenant):
     payload = {
         "type": "customer.subscription.deleted",
-        "data": {"object": {"metadata": {"tenant_schema": tenant.schema_name}}},
+        "data": {
+            "object": {
+                "metadata": {"tenant_schema": tenant.schema_name},
+                "customer": "cus_test_123",
+            }
+        },
     }
     mock_construct_event.return_value = payload
 
     tenant.subscription_status = "pro"
+    tenant.stripe_customer_id = "cus_existing"
     tenant.save()
 
     response = _post_webhook(payload)
 
     assert response.status_code == 200
     tenant.refresh_from_db()
-    assert tenant.subscription_status == "canceled"
+    assert tenant.subscription_status == "free"
+    assert tenant.stripe_customer_id == "cus_test_123"
 
 
 @pytest.mark.django_db(transaction=True)

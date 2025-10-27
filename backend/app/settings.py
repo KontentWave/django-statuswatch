@@ -314,7 +314,7 @@ REST_FRAMEWORK = {
         "login": "10/hour",  # Login endpoint (prevent brute-force)
         "burst": "20/min",  # Burst protection (short-term)
         "sustained": "100/day",  # Long-term protection
-        "billing": "10/hour",  # Billing/checkout endpoints (prevent abuse)
+        "billing": "100/hour",  # Billing/checkout endpoints (prevent abuse)
     },
 }
 # -------------------------------------------------------------------
@@ -596,10 +596,42 @@ LOGGING = {
             "backupCount": 5,
             "formatter": "verbose",
         },
+        "file_webhooks_debug": {
+            "level": "DEBUG",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "webhooks_debug.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
+        "file_webhook_signatures": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "webhook_signatures.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
         "file_subscriptions": {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "subscriptions.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
+        "file_cancellations": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "cancellations.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
+        "file_subscription_state": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "subscription_state.log",
             "maxBytes": 1024 * 1024 * 10,
             "backupCount": 5,
             "formatter": "verbose",
@@ -651,8 +683,28 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
+        "payments.webhooks.debug": {
+            "handlers": ["file_webhooks_debug"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "payments.webhooks.signature": {
+            "handlers": ["file_webhook_signatures"],
+            "level": "INFO",
+            "propagate": False,
+        },
         "payments.subscriptions": {
             "handlers": ["console", "file_subscriptions"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments.subscription_state": {
+            "handlers": ["file_subscription_state"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments.cancellations": {
+            "handlers": ["console", "file_cancellations"],
             "level": "INFO",
             "propagate": False,
         },

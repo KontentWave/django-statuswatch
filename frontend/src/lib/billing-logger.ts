@@ -6,7 +6,7 @@ interface BillingLogger {
   write(entry: BillingLogEntry): Promise<void>;
 }
 
-type BillingEvent = "checkout" | "config";
+type BillingEvent = "checkout" | "config" | "portal" | "cancellation";
 
 type BillingPhase = "start" | "success" | "error" | "completed" | "canceled";
 

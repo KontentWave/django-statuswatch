@@ -9,6 +9,7 @@ from django.test import override_settings
 from django_tenants.utils import schema_context
 from rest_framework.test import APIClient
 from stripe import _error as stripe_error
+from tenants.models import Client
 
 User = get_user_model()
 
@@ -24,10 +25,17 @@ def tenant_user(db):
             password="SafePassw0rd!",
         )
 
+    Client.objects.filter(schema_name="test_tenant").update(
+        stripe_customer_id="cus_test_existing",
+    )
+
     yield user
 
     with schema_context("test_tenant"):
         User.objects.filter(id=user.id).delete()
+    Client.objects.filter(schema_name="test_tenant").update(
+        stripe_customer_id=None,
+    )
 
 
 def _authenticated_client(user: User) -> APIClient:
@@ -77,7 +85,8 @@ def test_create_checkout_session_returns_stripe_url(mock_create, tenant_user, ca
 
     assert kwargs["mode"] == "subscription"
     assert kwargs["line_items"] == [{"price": "price_test_pro", "quantity": 1}]
-    assert kwargs["customer_email"] == "jane.doe@example.com"
+    assert kwargs["customer"] == "cus_test_existing"
+    assert "customer_email" not in kwargs
     assert kwargs["metadata"]["tenant_schema"] == "test_tenant"
     assert kwargs["metadata"]["user_id"] == str(tenant_user.id)
     assert kwargs["success_url"] == (
@@ -201,6 +210,62 @@ def test_create_checkout_session_requires_secret_key(mock_create, tenant_user):
     body = response.json()
     assert body["error"]["code"] == "internal_server_error"
     assert "Please try again" in body["error"]["message"]
+    mock_create.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.billing_portal.Session.create")
+def test_create_portal_session_returns_stripe_url(mock_create, tenant_user):
+    """Authenticated Pro users receive a billing portal URL when customer ID exists."""
+
+    mock_create.return_value = MagicMock(
+        id="bps_test_123",
+        url="https://stripe.test/portal/bps_test_123",
+    )
+
+    Client.objects.filter(schema_name="test_tenant").update(
+        stripe_customer_id="cus_test_123",
+        subscription_status="pro",
+    )
+
+    client = _authenticated_client(tenant_user)
+
+    response = client.post("/api/billing/create-portal-session/", format="json")
+
+    assert response.status_code == 201
+    assert response.json() == {"url": "https://stripe.test/portal/bps_test_123"}
+
+    mock_create.assert_called_once_with(
+        customer="cus_test_123",
+        return_url="https://app.statuswatch.local/billing",
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    FRONTEND_URL="https://app.statuswatch.local",
+)
+@patch("payments.views.stripe.billing_portal.Session.create")
+def test_create_portal_session_requires_customer_id(mock_create, tenant_user):
+    """Portal session is unavailable until the tenant has a Stripe customer ID."""
+
+    Client.objects.filter(schema_name="test_tenant").update(
+        stripe_customer_id=None,
+        subscription_status="pro",
+    )
+
+    client = _authenticated_client(tenant_user)
+
+    response = client.post("/api/billing/create-portal-session/", format="json")
+
+    assert response.status_code == 409
+    detail = response.json().get("detail", "")
+    assert "Billing portal" in detail
     mock_create.assert_not_called()
 
 
@@ -764,4 +829,4 @@ def test_billing_throttle_rate_in_settings():
 
     # Billing rate should be configured
     assert "billing" in throttle_rates
-    assert throttle_rates["billing"] == "10/hour"
+    assert throttle_rates["billing"] == "100/hour"

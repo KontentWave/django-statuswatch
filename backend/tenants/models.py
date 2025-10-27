@@ -18,6 +18,13 @@ class Client(TenantMixin):
         choices=SubscriptionStatus.choices,
         default=SubscriptionStatus.FREE,
     )
+    stripe_customer_id: models.CharField = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Stripe customer identifier associated with this tenant",
+    )
 
     # auto-create the schema when saving this tenant
     auto_create_schema = True

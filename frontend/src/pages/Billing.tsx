@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 
-import { createBillingCheckoutSession } from "@/lib/billing-client";
+import {
+  cancelBillingSubscription,
+  createBillingCheckoutSession,
+  createBillingPortalSession,
+} from "@/lib/billing-client";
+import { fetchCurrentUser } from "@/lib/api";
 import { logBillingEvent } from "@/lib/billing-logger";
 import { redirectTo } from "@/lib/navigation";
 import { clearCheckoutPlan, rememberCheckoutPlan } from "@/lib/billing-storage";
 import { logSubscriptionEvent } from "@/lib/subscription-logger";
-import { useSubscriptionStore } from "@/stores/subscription";
+import { SubscriptionPlan, useSubscriptionStore } from "@/stores/subscription";
 
 const proPlanFeatures = [
   "Unlimited monitored endpoints",
@@ -27,6 +32,28 @@ export default function BillingPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const subscriptionPlan = useSubscriptionStore((state) => state.plan);
+  const setSubscriptionPlan = useSubscriptionStore((state) => state.setPlan);
+
+  const userQuery = useQuery({
+    queryKey: ["current-user"],
+    queryFn: fetchCurrentUser,
+    retry: false,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    staleTime: 0,
+  });
+  const currentUser = userQuery.data;
+
+  useEffect(() => {
+    if (!currentUser?.plan) {
+      return;
+    }
+
+    const nextPlan = currentUser.plan as SubscriptionPlan;
+    if (nextPlan !== subscriptionPlan) {
+      setSubscriptionPlan(nextPlan);
+    }
+  }, [currentUser?.plan, setSubscriptionPlan, subscriptionPlan]);
 
   const planState = useMemo(() => {
     switch (subscriptionPlan) {
@@ -93,17 +120,134 @@ export default function BillingPage() {
     },
   });
 
+  const portalMutation = useMutation({
+    mutationFn: () => createBillingPortalSession(),
+    onMutate: () => {
+      setErrorMessage(null);
+      setIsRedirecting(false);
+      void logBillingEvent({
+        event: "portal",
+        phase: "start",
+        plan: subscriptionPlan,
+        source: "billing-page",
+      });
+    },
+    onSuccess: (redirectUrl) => {
+      setIsRedirecting(true);
+      void logBillingEvent({
+        event: "portal",
+        phase: "success",
+        plan: subscriptionPlan,
+        redirectUrl,
+        source: "billing-page",
+      });
+      redirectTo(redirectUrl);
+    },
+    onError: (err: unknown) => {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "We could not open the Stripe billing portal.";
+      setErrorMessage(message);
+      setIsRedirecting(false);
+      void logBillingEvent({
+        event: "portal",
+        phase: "error",
+        plan: subscriptionPlan,
+        message,
+        source: "billing-page",
+      });
+    },
+  });
+
   const handleUpgradeClick = () => {
     rememberCheckoutPlan("pro");
     upgradeMutation.mutate();
   };
 
+  const handleManageSubscription = () => {
+    void logSubscriptionEvent({
+      event: "plan_change",
+      action: "cta_click",
+      plan: subscriptionPlan,
+      source: "billing-page",
+    });
+    portalMutation.mutate();
+  };
+
+  const cancelMutation = useMutation({
+    mutationFn: cancelBillingSubscription,
+    onMutate: () => {
+      setErrorMessage(null);
+      setIsRedirecting(false);
+      void logBillingEvent({
+        event: "cancellation",
+        phase: "start",
+        plan: subscriptionPlan,
+        source: "billing-page",
+      });
+      void logSubscriptionEvent({
+        event: "plan_change",
+        action: "cancel_start",
+        plan: subscriptionPlan,
+        source: "billing-page",
+      });
+    },
+    onSuccess: async (plan) => {
+      const nextPlan = plan as SubscriptionPlan;
+      setSubscriptionPlan(nextPlan);
+      await logBillingEvent({
+        event: "cancellation",
+        phase: "success",
+        plan: nextPlan,
+        source: "billing-page",
+      });
+      await logSubscriptionEvent({
+        event: "plan_change",
+        action: "cancel_success",
+        plan: nextPlan,
+        source: "billing-page",
+      });
+      void userQuery.refetch();
+    },
+    onError: async (err: unknown) => {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "We could not cancel your subscription. Please try again.";
+      setErrorMessage(message);
+      await logBillingEvent({
+        event: "cancellation",
+        phase: "error",
+        plan: subscriptionPlan,
+        message,
+        source: "billing-page",
+      });
+      await logSubscriptionEvent({
+        event: "plan_change",
+        action: "cancel_error",
+        plan: subscriptionPlan,
+        source: "billing-page",
+        error: message,
+      });
+    },
+  });
+
   const handleNavigateBack = () => {
     void navigate({ to: "/dashboard" });
   };
 
-  const showBusyState = upgradeMutation.isPending || isRedirecting;
+  const showBusyState =
+    upgradeMutation.isPending ||
+    portalMutation.isPending ||
+    cancelMutation.isPending ||
+    isRedirecting;
   const disableUpgradeCta = showBusyState || !planState.canUpgrade;
+  const disableManageCta =
+    portalMutation.isPending || cancelMutation.isPending || isRedirecting;
+  const disableCancelCta = cancelMutation.isPending || isRedirecting;
+  const showManageButton = subscriptionPlan === "pro";
+  const showCancelButton = subscriptionPlan === "pro";
 
   useEffect(() => {
     void logBillingEvent({
@@ -134,13 +278,35 @@ export default function BillingPage() {
             {planState.statusLabel}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleNavigateBack}
-          className="inline-flex items-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
-          Back to Dashboard
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {showManageButton && (
+            <button
+              type="button"
+              onClick={handleManageSubscription}
+              disabled={disableManageCta}
+              className="inline-flex items-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {disableManageCta ? "Opening portal…" : "Manage Subscription"}
+            </button>
+          )}
+          {showCancelButton && (
+            <button
+              type="button"
+              onClick={() => cancelMutation.mutate()}
+              disabled={disableCancelCta}
+              className="inline-flex items-center rounded-md border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-destructive focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {disableCancelCta ? "Cancelling…" : "Cancel Plan"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleNavigateBack}
+            className="inline-flex items-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            Back to Dashboard
+          </button>
+        </div>
       </header>
 
       <section className="grid gap-4 sm:grid-cols-2">

@@ -617,3 +617,32 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
 **Audit Completed By:** AI Code Review System  
 **Methodology:** Static analysis + 216 automated tests + comprehensive security review  
 **Next Audit:** Post-production deployment (30 days)
+
+### 6. Stripe Customer Portal
+
+- **Action:** Allow a paid Pro user to manage their billing details (e.g., update credit card, cancel subscription) via the Stripe Customer Portal.
+- **Test Plan:**
+  - **Backend:** Test that the portal endpoint generates a valid Stripe portal session URL.
+  - **Frontend:** Test that clicking the "Manage Billing" button redirects the user to their Stripe portal page.
+
+#### **Frontend Tasks (React)**
+
+- On the `/billing` page (or in user settings), add a "Manage Subscription" button that is only visible to Pro users.
+- On click, `POST` to a new backend endpoint (`/api/billing/create-portal-session/`).
+- On success, receive the `url` from the response and redirect the user's browser.
+
+#### **Backend Tasks (Django)**
+
+- Create a DRF `APIView` for `/api/billing/create-portal-session/`.
+- This view's `post` method will:
+  1.  Get the `stripe_customer_id` associated with the user's `Tenant` (this ID should be saved from the webhook in step 5).
+  2.  Use the Stripe SDK to create a `billing_portal.Session`.
+  3.  Return the `url` of the created portal session.
+
+---
+
+#### **Implementation Notes**
+
+- `BillingPortalSessionView` now guards against missing Stripe configuration, looks up the tenant's `stripe_customer_id`, and writes structured entries to `payments.billing` so every portal launch is audit-friendly. Error paths propagate through our sanitized Stripe exception helpers.
+- The React billing surface renders "Manage Subscription" whenever the global subscription store reports `pro`, posts to `/api/billing/create-portal-session/`, and redirects to the returned portal URL; Vitest coverage asserts the happy-path redirect and handles failures with inline messaging.
+- Manual smoke tests confirmed portal sessions reuse each tenant's customer id, Stripe's sandbox portal reflects the current subscription, and webhook-driven status updates keep the UI and tenant model in sync after plan changes or cancellations.
