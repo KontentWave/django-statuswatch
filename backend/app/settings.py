@@ -65,12 +65,13 @@ TENANT_MODEL = "tenants.Client"  # app_label.ModelName
 DOMAIN_MODEL = "tenants.Domain"
 
 SHARED_APPS: tuple[str, ...] = (
-    "django_tenants",  # must be first
-    "django.contrib.contenttypes",  # required by tenants
+    "django_tenants",  # MUST be first!
+    "django.contrib.contenttypes",
     "django.contrib.staticfiles",
     "rest_framework",
     "corsheaders",  # CORS support
     "tenants",  # your tenants app (Client/Domain models)
+    "django.contrib.auth",  # Add auth to shared - needed for token_blacklist FK
     "rest_framework_simplejwt.token_blacklist",  # JWT blacklist in PUBLIC schema (shared across tenants)
 )
 

@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import { fileURLToPath, URL } from "node:url";
 import fs from "fs";
+import type { IncomingMessage } from "node:http";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -45,7 +46,7 @@ export default defineConfig(({ mode }) => {
           changeOrigin: false, // CRITICAL: Preserve Host header with tenant subdomain
           secure: false,
           // Dynamic router: extract tenant from Host header and route to correct backend
-          router: (req) => {
+          router: (req: IncomingMessage) => {
             const host = req.headers.host || "localhost:5173";
             const hostname = host.split(":")[0]; // Remove port
 
