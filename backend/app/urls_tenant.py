@@ -1,11 +1,10 @@
 from api.health import health_check, metrics, readiness_check
 from api.multi_tenant_auth import MultiTenantLoginView
-from api.token_refresh import MultiTenantTokenRefreshView
 from django.conf import settings
 from django.contrib import admin
 from django.http import HttpResponse
 from django.urls import include, path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 
 urlpatterns = [
     path(settings.ADMIN_URL, admin.site.urls),
@@ -24,7 +23,7 @@ urlpatterns = [
 
 urlpatterns += [
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/auth/token/refresh/", MultiTenantTokenRefreshView.as_view(), name="token_refresh"),
+    path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
     path("", lambda r: HttpResponse("tenant OK"), name="tenant-home"),
 ]

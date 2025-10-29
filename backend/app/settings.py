@@ -71,8 +71,8 @@ SHARED_APPS: tuple[str, ...] = (
     "rest_framework",
     "corsheaders",  # CORS support
     "tenants",  # your tenants app (Client/Domain models)
-    "django.contrib.auth",  # Add auth to shared - needed for token_blacklist FK
-    "rest_framework_simplejwt.token_blacklist",  # JWT blacklist in PUBLIC schema (shared across tenants)
+    # NOTE: token_blacklist NOT in SHARED_APPS - we handle it manually
+    # "rest_framework_simplejwt.token_blacklist",
 )
 
 TENANT_APPS: tuple[str, ...] = (
@@ -80,6 +80,7 @@ TENANT_APPS: tuple[str, ...] = (
     "django.contrib.auth",
     "django.contrib.sessions",
     "django.contrib.messages",
+    "rest_framework_simplejwt.token_blacklist",  # JWT blacklist per tenant
     # your tenant-facing apps:
     "api",
     "monitors",
