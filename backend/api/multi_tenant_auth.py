@@ -121,8 +121,10 @@ class MultiTenantLoginView(APIView):
                     f"[MULTI-TENANT-LOGIN] Tenant-specific login for schema: {target_schema}"
                 )
 
-                # Authenticate using the multi-tenant service
-                auth_data = MultiTenantAuthService.authenticate_user(username, password)
+                # Authenticate using the multi-tenant service WITH specific tenant filter
+                auth_data = MultiTenantAuthService.authenticate_user(
+                    username, password, tenant_schema=target_schema
+                )
 
                 # Verify the user was found in the correct tenant
                 if auth_data["tenant_schema"] != target_schema:

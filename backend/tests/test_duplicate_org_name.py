@@ -2,6 +2,8 @@
 """
 Test duplicate organization name error handling during registration.
 
+This is a standalone diagnostic script. For pytest, use test_duplicate_org_name_pytest.py
+
 Verifies that:
 1. First organization with a name succeeds
 2. Second organization with same name gets proper error (409 Conflict)
@@ -33,16 +35,21 @@ def cleanup_test_data():
     public_schema = getattr(settings, "PUBLIC_SCHEMA_NAME", get_public_schema_name())
 
     with schema_context(public_schema):
-        test_tenants = Client.objects.filter(name="TestUniqueOrg")
+        # Clean up by name AND schema_name pattern
+        test_tenants = Client.objects.filter(
+            name__in=["TestUniqueOrg", "TestUniqueOrg2"]
+        ) | Client.objects.filter(schema_name__startswith="testuniqueorg")
+
         for tenant in test_tenants:
             try:
-                print(f"  🧹 Cleaning up: {tenant.schema_name}")
+                print(f"  🧹 Cleaning up: {tenant.schema_name} ({tenant.name})")
                 tenant.delete(force_drop=False)
             except Exception as e:
                 print(f"  ⚠️  Cleanup warning: {e}")
 
 
-def test_duplicate_organization_name_error():
+def main():
+    """Main test function - only runs when script is executed directly."""
     """Test that duplicate organization names are properly rejected."""
     print("\n" + "=" * 70)
     print("TEST: Duplicate Organization Name Error Handling")
@@ -179,5 +186,5 @@ def test_duplicate_organization_name_error():
 
 
 if __name__ == "__main__":
-    success = test_duplicate_organization_name_error()
+    success = main()
     sys.exit(0 if success else 1)

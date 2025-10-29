@@ -172,17 +172,35 @@ export default function LoginPage() {
       }
     } catch (err) {
       const error = err as AxiosError<LoginApiResponse>;
-      const errorMessage =
-        error.response?.data?.error ??
-        error.response?.data?.detail ??
-        (error instanceof Error ? error.message : null);
+
+      // Extract error message - handle both string and object formats
+      let errorMessage: string | null = null;
+      const errorData = error.response?.data?.error;
+
+      if (typeof errorData === "string") {
+        errorMessage = errorData;
+      } else if (
+        errorData &&
+        typeof errorData === "object" &&
+        "message" in errorData
+      ) {
+        errorMessage = (errorData as { message: string }).message;
+      }
+
+      // Fallback to detail or generic message
+      if (!errorMessage) {
+        errorMessage =
+          error.response?.data?.detail ??
+          (error instanceof Error ? error.message : null) ??
+          "Invalid email or password.";
+      }
 
       logAuthEvent("LOGIN_FAILED", {
         username: values.email,
-        error: errorMessage ?? "Unknown error",
+        error: errorMessage,
         source: "login_page",
       });
-      setFormError(errorMessage ?? "Invalid email or password.");
+      setFormError(errorMessage);
     }
   };
 
@@ -355,19 +373,35 @@ export default function LoginPage() {
                 }
               } catch (err) {
                 const error = err as AxiosError<LoginApiResponse>;
-                const errorMessage =
-                  error.response?.data?.error ??
-                  error.response?.data?.detail ??
-                  (error instanceof Error ? error.message : null);
+
+                // Extract error message - handle both string and object formats
+                let errorMessage: string | null = null;
+                const errorData = error.response?.data?.error;
+
+                if (typeof errorData === "string") {
+                  errorMessage = errorData;
+                } else if (
+                  errorData &&
+                  typeof errorData === "object" &&
+                  "message" in errorData
+                ) {
+                  errorMessage = (errorData as { message: string }).message;
+                }
+
+                // Fallback to detail or generic message
+                if (!errorMessage) {
+                  errorMessage =
+                    error.response?.data?.detail ??
+                    (error instanceof Error ? error.message : null) ??
+                    "Login failed for selected organization.";
+                }
 
                 logAuthEvent("TENANT_LOGIN_FAILED", {
                   email: loginCredentials.email,
                   selected_tenant: selectedTenant,
-                  error: errorMessage ?? "Unknown error",
+                  error: errorMessage,
                 });
-                setFormError(
-                  errorMessage ?? "Login failed for selected organization."
-                );
+                setFormError(errorMessage);
               }
             }}
             disabled={!selectedTenant}

@@ -86,9 +86,10 @@ describe("LoginPage", () => {
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
     await waitFor(() => {
-      expect(postMock).toHaveBeenCalledWith("/auth/token/", {
+      expect(postMock).toHaveBeenCalledWith("/auth/login/", {
         username: "user@example.com",
         password: "Password123!",
+        tenant_schema: null,
       });
     });
 

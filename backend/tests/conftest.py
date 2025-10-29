@@ -53,6 +53,57 @@ if connection.ops.execute_sql_flush is not _execute_sql_flush_with_cascade:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def cleanup_all_test_schemas(django_db_setup, django_db_blocker):
+    """
+    Clean ALL test schemas before test session starts.
+
+    Handles orphaned schemas (schemas without tenant records) that persist
+    from previous test runs and cause unique constraint violations.
+
+    This runs once at the start of the test session and ensures a clean slate.
+    """
+    with django_db_blocker.unblock():
+        connection.set_schema_to_public()
+
+        # First, delete any test tenant records with force_drop
+        test_patterns = ["testuniqueorg", "uniquenametest", "diagnostic", "test-org"]
+        for pattern in test_patterns:
+            test_tenants = Client.objects.filter(schema_name__icontains=pattern)
+            for tenant in test_tenants:
+                try:
+                    tenant.delete(force_drop=True)
+                except Exception:
+                    pass  # Ignore errors - schema might already be gone
+
+        # Then, drop any orphaned test schemas (schemas without tenant records)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT schema_name
+                FROM information_schema.schemata
+                WHERE (schema_name LIKE 'testuniqueorg%'
+                       OR schema_name LIKE 'uniquenametest%'
+                       OR schema_name LIKE 'diagnostic%'
+                       OR schema_name LIKE 'test-org%'
+                       OR schema_name LIKE 'test_org%')
+                AND schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
+            """
+            )
+            orphaned_schemas = [row[0] for row in cursor.fetchall()]
+
+        for schema in orphaned_schemas:
+            try:
+                with connection.cursor() as cursor:
+                    # Use quotes for schemas with hyphens
+                    cursor.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            except Exception:
+                pass  # Ignore errors - schema might not exist
+
+    yield
+    # No teardown - let pytest handle normal cleanup
+
+
+@pytest.fixture(scope="session", autouse=True)
 def apply_cascade_patch():
     """
     Session-scoped fixture that ensures CASCADE patch is applied for all tests.

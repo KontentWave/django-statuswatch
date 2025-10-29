@@ -201,11 +201,18 @@ class BillingCheckoutSessionView(APIView):
         sanitized_tenant = sanitize_log_value(tenant_schema)
         sanitized_customer = sanitize_log_value(tenant_customer_id)
 
-        # Use dynamic frontend URL based on current request Host header (multi-tenant support)
-        # Always use https since frontend (Vite) serves over HTTPS, even though backend is HTTP
-        protocol = "https"
-        host = request.get_host()
-        base_frontend_url = f"{protocol}://{host}"
+        # Use FRONTEND_URL setting if configured, otherwise fall back to request host
+        # This allows tests to override the URL and supports multi-tenant deployments
+        if hasattr(settings, "FRONTEND_URL") and settings.FRONTEND_URL:
+            base_frontend_url = settings.FRONTEND_URL.rstrip("/")
+            host = "configured"  # For logging
+            protocol = "configured"
+        else:
+            # Fallback: use current request host with https protocol
+            protocol = "https"
+            host = request.get_host()
+            base_frontend_url = f"{protocol}://{host}"
+
         success_url = f"{base_frontend_url}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base_frontend_url}/billing/cancel"
 
@@ -487,11 +494,18 @@ class BillingPortalSessionView(APIView):
 
         stripe.api_key = settings.STRIPE_SECRET_KEY
 
-        # Use dynamic frontend URL based on current request Host header (multi-tenant support)
-        # Always use https since frontend (Vite) serves over HTTPS, even though backend is HTTP
-        protocol = "https"
-        host = request.get_host()
-        base_frontend_url = f"{protocol}://{host}"
+        # Use FRONTEND_URL setting if configured, otherwise fall back to request host
+        # This allows tests to override the URL and supports multi-tenant deployments
+        if hasattr(settings, "FRONTEND_URL") and settings.FRONTEND_URL:
+            base_frontend_url = settings.FRONTEND_URL.rstrip("/")
+            host = "configured"  # For logging
+            protocol = "configured"
+        else:
+            # Fallback: use current request host with https protocol
+            protocol = "https"
+            host = request.get_host()
+            base_frontend_url = f"{protocol}://{host}"
+
         return_url = f"{base_frontend_url}/billing"
 
         billing_logger.info(

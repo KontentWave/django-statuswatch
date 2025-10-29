@@ -106,21 +106,29 @@ class MultiTenantAuthService:
         return matches
 
     @staticmethod
-    def find_user_in_tenants(username: str) -> dict[str, Any] | None:
+    def find_user_in_tenants(
+        username: str, tenant_schema: str | None = None
+    ) -> dict[str, Any] | None:
         """
         Search all tenant schemas to find a user by username or email.
 
         Args:
             username: The username or email to search for
+            tenant_schema: Optional - specific tenant schema to search in
 
         Returns:
             Dict with keys: 'schema_name', 'user_id', 'username', 'email'
             or None if user not found in any tenant
         """
-        logger.info(f"[MULTI-TENANT-AUTH] Searching for user: {username}")
+        logger.info(
+            f"[MULTI-TENANT-AUTH] Searching for user: {username}"
+            + (f" in tenant: {tenant_schema}" if tenant_schema else " in all tenants")
+        )
 
-        # Get all tenant schemas (exclude public)
+        # Get all tenant schemas (exclude public), optionally filter by specific schema
         tenants = Client.objects.exclude(schema_name="public")
+        if tenant_schema:
+            tenants = tenants.filter(schema_name=tenant_schema)
 
         for tenant in tenants:
             schema_name = tenant.schema_name
@@ -174,23 +182,27 @@ class MultiTenantAuthService:
         return None
 
     @staticmethod
-    def authenticate_user(username: str, password: str) -> dict[str, Any]:
+    def authenticate_user(
+        username: str, password: str, tenant_schema: str | None = None
+    ) -> dict[str, Any]:
         """
-        Authenticate a user across all tenant schemas.
+        Authenticate a user across all tenant schemas (or specific tenant if provided).
 
-        This method:
-        1. Finds which tenant schema the user belongs to
-        2. Switches to that schema
-        3. Authenticates the user using Django's auth system
+        This is the primary authentication method for multi-tenant setup.
+        It:
+        1. Searches all tenants (or specific tenant) to find the user
+        2. Switches to the correct tenant schema
+        3. Authenticates the password
         4. Generates JWT tokens
-        5. Returns tokens + tenant information
+        5. Returns authentication response
 
         Args:
-            username: Username or email
-            password: Password
+            username: User's email or username
+            password: User's password
+            tenant_schema: Optional - specific tenant schema to authenticate in
 
         Returns:
-            Dict with keys:
+            Dict containing:
                 - access: JWT access token
                 - refresh: JWT refresh token
                 - tenant_schema: Schema name (e.g., 'marcepokus')
@@ -203,8 +215,8 @@ class MultiTenantAuthService:
         """
         logger.info(f"[MULTI-TENANT-AUTH] Authentication attempt for: {username}")
 
-        # Step 1: Find which tenant the user belongs to
-        user_info = MultiTenantAuthService.find_user_in_tenants(username)
+        # Step 1: Find which tenant the user belongs to (optionally filtered by tenant_schema)
+        user_info = MultiTenantAuthService.find_user_in_tenants(username, tenant_schema)
 
         if not user_info:
             logger.warning(
