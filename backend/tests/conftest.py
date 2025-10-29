@@ -252,7 +252,11 @@ def tenant_factory(db):
 
     created: list[Client] = []
 
-    def _create(name: str = "Test Tenant") -> Client:
+    def _create(name: str | None = None) -> Client:
+        # Generate unique name to avoid violating Feature 7's unique constraint on Client.name
+        if name is None:
+            name = f"Test Tenant {uuid.uuid4().hex[:8]}"
+
         schema_name = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}"
         tenant = Client(
             schema_name=schema_name,
