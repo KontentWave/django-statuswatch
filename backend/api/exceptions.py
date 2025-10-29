@@ -42,6 +42,16 @@ class DuplicateEmailError(BaseStatusWatchException):
     default_code = "duplicate_email"
 
 
+class DuplicateOrganizationNameError(BaseStatusWatchException):
+    """
+    Raised when a user tries to register with an organization name that already exists.
+    """
+
+    status_code = 409
+    default_detail = "This organization name is already taken. Please choose another name."
+    default_code = "duplicate_organization_name"
+
+
 class SchemaConflictError(BaseStatusWatchException):
     """
     Raised when there's a conflict with tenant schema naming.

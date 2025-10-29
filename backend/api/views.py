@@ -123,6 +123,22 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
         tenant = getattr(request, "tenant", None)
         schema_name = getattr(tenant, "schema_name", "public")
         user_agent = request.META.get("HTTP_USER_AGENT", "")
+        host = request.get_host()
+        origin = request.META.get("HTTP_ORIGIN", "")
+
+        # Enhanced logging: track tenant routing
+        auth_logger.info(
+            "Login attempt received",
+            extra={
+                "username": username,
+                "schema_name": schema_name,
+                "host": host,
+                "origin": origin,
+                "ip_address": ip_address,
+                "user_agent": user_agent[:100] if user_agent else "",  # Truncate long UA
+                "is_public_schema": schema_name == "public",
+            },
+        )
 
         try:
             serializer.is_valid(raise_exception=True)
@@ -133,6 +149,7 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
                 extra={
                     "email": username,
                     "schema_name": schema_name,
+                    "host": host,
                     "ip_address": ip_address,
                     "reason": reason,
                     "user_agent": user_agent,
@@ -145,7 +162,7 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
                 user_email=username,
                 ip_address=ip_address,
                 tenant_schema=schema_name,
-                details={"reason": reason, "user_agent": user_agent},
+                details={"reason": reason, "user_agent": user_agent, "host": host},
             )
 
             raise InvalidToken(reason) from exc
@@ -157,6 +174,7 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
                 "email": username or getattr(user, "email", None),
                 "user_id": getattr(user, "id", None),
                 "schema_name": schema_name,
+                "host": host,
                 "ip_address": ip_address,
                 "user_agent": user_agent,
             },
@@ -169,7 +187,7 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
             user_email=username or getattr(user, "email", None),
             ip_address=ip_address,
             tenant_schema=schema_name,
-            details={"user_agent": user_agent},
+            details={"user_agent": user_agent, "host": host},
         )
 
         return Response(serializer.validated_data, status=status.HTTP_200_OK)

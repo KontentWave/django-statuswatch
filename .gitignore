@@ -30,6 +30,7 @@ frontend/.eslintcache
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+*.tsbuildinfo
 
 # Vite env files (keep secrets out of git)
 frontend/.env

@@ -5,11 +5,6 @@ import fs from "fs";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const proxyTarget =
-    env.VITE_API_BASE ??
-    env.VITE_BACKEND_ORIGIN ??
-    env.VITE_BACKEND_PROXY ??
-    "http://127.0.0.1:8001"; // Default to Django on 8001
 
   // SSL certificate paths (update these to your actual paths)
   const certPath = env.VITE_SSL_CERT || "/path/to/your/cert.pem";
@@ -19,9 +14,10 @@ export default defineConfig(({ mode }) => {
   const useHttps = fs.existsSync(certPath) && fs.existsSync(keyPath);
 
   console.log("🔧 Vite Config:", {
-    proxyTarget,
+    mode,
     useHttps,
     certPath: useHttps ? certPath : "not using HTTPS",
+    note: "Dynamic proxy - extracts tenant from request Host header",
   });
 
   return {
@@ -38,11 +34,38 @@ export default defineConfig(({ mode }) => {
             key: fs.readFileSync(keyPath),
           }
         : undefined,
+      // Dynamic proxy based on incoming request Host header
+      // Examples:
+      //   localhost:5173/api → localhost:8001/api
+      //   acme.localhost:5173/api → acme.localhost:8001/api
+      //   marcepokus.localhost:5173/api → marcepokus.localhost:8001/api
       proxy: {
         "/api": {
-          target: proxyTarget,
-          changeOrigin: true,
+          target: "http://localhost:8001", // Default fallback
+          changeOrigin: false, // CRITICAL: Preserve Host header with tenant subdomain
           secure: false,
+          // Dynamic router: extract tenant from Host header and route to correct backend
+          router: (req) => {
+            const host = req.headers.host || "localhost:5173";
+            const hostname = host.split(":")[0]; // Remove port
+
+            // Extract tenant subdomain
+            const parts = hostname.split(".");
+
+            // If no subdomain (just "localhost"), route to localhost:8001
+            if (hostname === "localhost") {
+              return "http://localhost:8001";
+            }
+
+            // If subdomain exists (e.g., "acme.localhost"), route to tenant backend
+            if (parts.length >= 2 && parts[parts.length - 1] === "localhost") {
+              const tenant = parts[0];
+              return `http://${tenant}.localhost:8001`;
+            }
+
+            // Fallback for any other domain
+            return "http://localhost:8001";
+          },
         },
       },
     },

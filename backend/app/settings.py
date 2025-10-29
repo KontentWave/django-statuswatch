@@ -71,6 +71,7 @@ SHARED_APPS: tuple[str, ...] = (
     "rest_framework",
     "corsheaders",  # CORS support
     "tenants",  # your tenants app (Client/Domain models)
+    "rest_framework_simplejwt.token_blacklist",  # JWT blacklist in PUBLIC schema (shared across tenants)
 )
 
 TENANT_APPS: tuple[str, ...] = (
@@ -78,7 +79,6 @@ TENANT_APPS: tuple[str, ...] = (
     "django.contrib.auth",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "rest_framework_simplejwt.token_blacklist",  # Per-tenant JWT blacklist tables
     # your tenant-facing apps:
     "api",
     "monitors",
@@ -256,6 +256,13 @@ if not DEBUG:
                 "Get your keys from https://dashboard.stripe.com/webhooks"
             )
 
+# -------------------------------------------------------------------
+# Admin Panel Security (P1-01)
+# -------------------------------------------------------------------
+# Use a non-standard URL in production to reduce brute-force attack surface
+# Default: "admin/" (standard Django path)
+# Production recommendation: "secure-admin-panel-xyz123/"
+ADMIN_URL = env("ADMIN_URL", default="admin/")
 
 # === TENANTS / JWT / CORS (canonical tail) ===
 
@@ -270,9 +277,11 @@ MIDDLEWARE = [
     "app.middleware.SecurityHeadersMiddleware",  # P1-03: Additional security headers
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django_tenants.middleware.main.TenantMainMiddleware",
+    "app.middleware_tenant_logging.TenantRoutingLoggingMiddleware",  # DEBUG: Log which schema is selected
     "app.middleware_logging.RequestIDMiddleware",  # Add unique request ID
     "app.middleware_logging.RequestLoggingMiddleware",  # Log all requests/responses
     "corsheaders.middleware.CorsMiddleware",
+    "app.middleware_cors_logging.CorsLoggingMiddleware",  # Log CORS decisions for debugging
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -357,6 +366,26 @@ CORS_ALLOWED_ORIGINS = env.list(
         "https://localhost:8443",  # OpenResty/Nginx proxy
     ],
 )
+
+# CORS regex patterns for multi-tenant subdomains
+# Allows any *.localhost:5173 subdomain (e.g., acme.localhost:5173)
+# This is future-resistant: new tenants automatically work
+CORS_ALLOWED_ORIGIN_REGEXES = env.list(
+    "CORS_ALLOWED_ORIGIN_REGEXES",
+    default=[
+        r"^http://localhost:5173$",  # Exact match for main domain
+        r"^http://127\.0\.0\.1:5173$",  # Exact match for IP
+        r"^http://[a-z0-9-]+\.localhost:5173$",  # Any tenant subdomain (http)
+        r"^https://localhost:5173$",  # HTTPS main domain
+        r"^https://[a-z0-9-]+\.localhost:5173$",  # Any tenant subdomain (https)
+        r"^https://[a-z0-9-]+\.django-01\.local$",  # Production-like pattern (no port)
+        r"^https://[a-z0-9-]+\.django-01\.local:\d+$",  # Production with port
+        r"^https://[a-z0-9-]+\.statuswatch\.local$",  # Another production pattern (no port)
+        r"^https://[a-z0-9-]+\.statuswatch\.local:\d+$",  # Production with port
+    ],
+)
+
+CORS_ALLOW_CREDENTIALS = True  # Allow cookies/auth headers
 CORS_ALLOW_CREDENTIALS = True  # Allow cookies/auth headers
 CORS_ALLOW_HEADERS = [
     "accept",
@@ -636,6 +665,14 @@ LOGGING = {
             "backupCount": 5,
             "formatter": "verbose",
         },
+        "file_authentication": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "authentication.log",
+            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
     },
     "loggers": {
         "django": {
@@ -659,6 +696,11 @@ LOGGING = {
             "propagate": False,
         },
         "tenants": {
+            "handlers": ["console", "file_app"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "tenant.routing": {
             "handlers": ["console", "file_app"],
             "level": "INFO",
             "propagate": False,
@@ -709,7 +751,7 @@ LOGGING = {
             "propagate": False,
         },
         "api.auth": {
-            "handlers": ["console", "file_app", "file_security"],
+            "handlers": ["console", "file_authentication", "file_security"],
             "level": "INFO",
             "propagate": False,
         },

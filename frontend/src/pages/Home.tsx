@@ -4,23 +4,77 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { STRIPE_PK } from "@/lib/config";
 import { storeAuthTokens } from "@/lib/auth";
+import { logAuthEvent } from "@/lib/auth-logger";
 
 export default function Home() {
   const loginDemo = async () => {
+    logAuthEvent("LOGIN_ATTEMPT", {
+      username: "jwt",
+      source: "homepage_demo_button",
+    });
+
     try {
-      const { data } = await api.post("/auth/token/", {
+      // Use new multi-tenant login endpoint
+      const { data } = await api.post("/auth/login/", {
         username: "jwt",
         password: "JwtP@ss123456",
       });
+
       storeAuthTokens({ access: data.access, refresh: data.refresh });
-      toast.success("Logged in (jwt)");
+      logAuthEvent("TOKEN_STORED", {
+        username: "jwt",
+        hasAccess: !!data.access,
+        hasRefresh: !!data.refresh,
+        tenant_schema: data.tenant_schema,
+        tenant_name: data.tenant_name,
+      });
+
+      toast.success(`Logged in as jwt (${data.tenant_name})`);
+      logAuthEvent("LOGIN_SUCCESS", {
+        username: "jwt",
+        tenant: data.tenant_name,
+      });
+
+      // Redirect to tenant subdomain
+      if (data.tenant_domain) {
+        const port = window.location.port || "5173";
+        const protocol = window.location.protocol;
+
+        // Extract hostname without port (in case backend returns domain with port)
+        const hostname = data.tenant_domain.split(":")[0];
+        const tenantUrl = `${protocol}//${hostname}:${port}/dashboard`;
+
+        logAuthEvent("NAVIGATION_TO_DASHBOARD", {
+          from: "homepage",
+          username: "jwt",
+          tenant: data.tenant_name,
+          redirectTo: tenantUrl,
+        });
+
+        console.log(`[HOMEPAGE] Redirecting to: ${tenantUrl}`);
+        window.location.href = tenantUrl;
+      } else {
+        toast.error("No tenant domain in response");
+      }
     } catch (error: unknown) {
-      const detail =
+      const errorMsg =
         typeof error === "object" && error !== null && "response" in error
-          ? (error as { response?: { data?: { detail?: string } } }).response
+          ? (
+              error as {
+                response?: { data?: { error?: string; detail?: string } };
+              }
+            ).response?.data?.error ||
+            (error as { response?: { data?: { detail?: string } } }).response
               ?.data?.detail
           : undefined;
-      toast.error(detail ?? "Login failed");
+
+      logAuthEvent("LOGIN_FAILED", {
+        username: "jwt",
+        error: errorMsg ?? "Unknown error",
+        source: "homepage_demo_button",
+      });
+
+      toast.error(errorMsg ?? "Login failed");
     }
   };
 
@@ -84,9 +138,21 @@ export default function Home() {
           </Link>
         </div>
 
-        <p className="text-sm text-neutral-400">
-          API base: <code>{import.meta.env.VITE_API_BASE}</code>
-        </p>
+        <div className="space-y-2">
+          <p className="text-sm text-neutral-400">
+            API base:{" "}
+            <code>
+              {import.meta.env.VITE_API_BASE || "window.location.origin/api"}
+            </code>
+          </p>
+          <p className="text-xs text-neutral-500">
+            💡 Demo: Click "Login" to authenticate as JWT user
+            <br />
+            You'll be redirected to: <code>acme.localhost:5173/dashboard</code>
+            <br />
+            Or create your own organization and get your own subdomain!
+          </p>
+        </div>
       </div>
     </div>
   );

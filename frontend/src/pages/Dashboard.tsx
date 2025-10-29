@@ -16,6 +16,7 @@ import {
 } from "@/lib/endpoint-client";
 import { logDashboardEvent } from "@/lib/dashboard-logger";
 import { logSubscriptionEvent } from "@/lib/subscription-logger";
+import { logAuthEvent } from "@/lib/auth-logger";
 import { useSubscriptionStore } from "@/stores/subscription";
 
 const ENDPOINTS_QUERY_KEY = "endpoints";
@@ -78,6 +79,7 @@ export default function DashboardPage() {
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
+      logAuthEvent("LOGOUT", { username: data?.email, source: "dashboard" });
       const refreshToken = getRefreshToken();
       if (refreshToken) {
         await submitLogout(refreshToken);
@@ -85,7 +87,12 @@ export default function DashboardPage() {
     },
     onSuccess: () => {
       clearAuthTokens();
+      logAuthEvent("TOKEN_CLEARED", { source: "logout_success" });
       queryClient.clear();
+      logAuthEvent("NAVIGATION_TO_LOGIN", {
+        from: "dashboard",
+        reason: "logout",
+      });
       void navigate({
         to: "/login",
         replace: true,

@@ -12,7 +12,12 @@ from django_tenants.utils import get_public_schema_name, schema_context
 from rest_framework import serializers
 from tenants.models import Client, Domain
 
-from api.exceptions import DuplicateEmailError, SchemaConflictError, TenantCreationError
+from api.exceptions import (
+    DuplicateEmailError,
+    DuplicateOrganizationNameError,
+    SchemaConflictError,
+    TenantCreationError,
+)
 from api.performance_log import log_performance
 
 logger = logging.getLogger(__name__)
@@ -143,7 +148,8 @@ class RegistrationSerializer(serializers.Serializer):
             return {"detail": self.default_detail_message}
 
         except IntegrityError as e:
-            # Database constraint violation (e.g., duplicate email in tenant)
+            # Database constraint violation (e.g., duplicate email, duplicate organization name)
+            error_str = str(e).lower()
             logger.warning(
                 f"IntegrityError during registration for {email}: {str(e)}",
                 extra={"email": email, "organization_name": organization_name},
@@ -156,8 +162,20 @@ class RegistrationSerializer(serializers.Serializer):
                         "Failed to clean up tenant after IntegrityError",
                         extra={"email": email, "schema_name": getattr(tenant, "schema_name", None)},
                     )
-            if "email" in str(e).lower() or "username" in str(e).lower():
+
+            # Check for duplicate organization name
+            if "tenants_client_name" in error_str or (
+                "name" in error_str and "unique" in error_str
+            ):
+                raise DuplicateOrganizationNameError(
+                    "This organization name is already taken. Please choose another name."
+                ) from e
+
+            # Check for duplicate email
+            if "email" in error_str or "username" in error_str:
                 raise DuplicateEmailError("This email address is already registered.") from e
+
+            # Generic error for other integrity violations
             raise TenantCreationError() from e
 
         except Exception as e:

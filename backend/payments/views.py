@@ -200,9 +200,27 @@ class BillingCheckoutSessionView(APIView):
         tenant_customer_id = getattr(tenant, "stripe_customer_id", "") or ""
         sanitized_tenant = sanitize_log_value(tenant_schema)
         sanitized_customer = sanitize_log_value(tenant_customer_id)
-        base_frontend_url = settings.FRONTEND_URL.rstrip("/")
+
+        # Use dynamic frontend URL based on current request Host header (multi-tenant support)
+        # Always use https since frontend (Vite) serves over HTTPS, even though backend is HTTP
+        protocol = "https"
+        host = request.get_host()
+        base_frontend_url = f"{protocol}://{host}"
         success_url = f"{base_frontend_url}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base_frontend_url}/billing/cancel"
+
+        billing_logger.info(
+            f"[STRIPE-CHECKOUT] Creating checkout session with redirect URLs | "
+            f"host={host} success_url={success_url} cancel_url={cancel_url}",
+            extra={
+                "event": "stripe_checkout_urls",
+                "host": host,
+                "protocol": protocol,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "tenant_schema": sanitized_tenant,
+            },
+        )
 
         try:
             customer_origin = "existing"
@@ -468,8 +486,23 @@ class BillingPortalSessionView(APIView):
             )
 
         stripe.api_key = settings.STRIPE_SECRET_KEY
-        base_frontend_url = settings.FRONTEND_URL.rstrip("/")
+
+        # Use dynamic frontend URL based on current request Host header (multi-tenant support)
+        # Always use https since frontend (Vite) serves over HTTPS, even though backend is HTTP
+        protocol = "https"
+        host = request.get_host()
+        base_frontend_url = f"{protocol}://{host}"
         return_url = f"{base_frontend_url}/billing"
+
+        billing_logger.info(
+            f"[STRIPE-PORTAL] Creating billing portal with return URL | host={host} return_url={return_url}",
+            extra={
+                **log_context,
+                "host": host,
+                "protocol": protocol,
+                "return_url": return_url,
+            },
+        )
 
         try:
             billing_logger.info(

@@ -12,6 +12,7 @@ import {
   storeAuthTokens,
   type AuthTokens,
 } from "./auth";
+import { debug, debugError } from "./debug";
 
 interface AuthAxiosRequestConfig extends AxiosRequestConfig {
   _retry?: boolean;
@@ -32,11 +33,11 @@ export const api = axios.create({
   },
 });
 
-// Debug logging
+// Debug logging (only in development)
 api.interceptors.request.use((cfg) => {
   const config = cfg as AuthAxiosRequestConfig;
 
-  console.log("🚀 API Request:", {
+  debug("🚀 API Request:", {
     method: config.method?.toUpperCase(),
     url: config.url,
     baseURL: config.baseURL,
@@ -66,10 +67,10 @@ api.interceptors.request.use((cfg) => {
   return cfg;
 });
 
-// Debug response/error logging
+// Debug response/error logging (only in development)
 api.interceptors.response.use(
   (response: AxiosResponse) => {
-    console.log("✅ API Response:", {
+    debug("✅ API Response:", {
       status: response.status,
       url: response.config.url,
       data: response.data,
@@ -77,7 +78,7 @@ api.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    console.error("❌ API Error:", {
+    debugError("❌ API Error:", {
       message: error.message,
       code: error.code,
       url: error.config?.url,
