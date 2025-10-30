@@ -57,6 +57,7 @@ diagnostic_output.txt
 enhanced_logging_config.py
 
 # Temporary/backup files
+scripts/
 *.tmp
 *.bak
 *.swp
