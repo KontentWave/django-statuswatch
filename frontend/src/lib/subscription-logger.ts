@@ -19,6 +19,9 @@ type SubscriptionAction =
   | "refresh_start"
   | "refresh_success"
   | "refresh_error"
+  | "cancel_start"
+  | "cancel_success"
+  | "cancel_error"
   | "state_change"
   | "state_detected";
 

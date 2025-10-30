@@ -25,10 +25,29 @@ type EndpointLogEntryBase = {
 
 export type EndpointLogEntry = EndpointLogEntryBase & Record<string, unknown>;
 
-const logger: Logger = createLogger(
+let logger: Logger = createLogger(
   "endpoint-client",
   "logs/endpoint-events.log"
 );
+
+/**
+ * Configure endpoint logger (for testing)
+ *
+ * @param options - Configuration options or log file path string
+ */
+export function configureEndpointLogger(
+  options: string | { filePath: string }
+): void {
+  const logPath = typeof options === "string" ? options : options.filePath;
+  logger = createLogger("endpoint-client", logPath);
+}
+
+/**
+ * Reset endpoint logger to default (for testing)
+ */
+export function resetEndpointLogger(): void {
+  logger = createLogger("endpoint-client", "logs/endpoint-events.log");
+}
 
 /**
  * Log an endpoint event
