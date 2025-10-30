@@ -1,17 +1,17 @@
-const isNodeRuntime =
-  typeof process !== "undefined" && !!process.versions?.node;
-const DEFAULT_LOG_PATH = "logs/dashboard-events.log";
+/**
+ * Dashboard Logger
+ *
+ * Logs dashboard-related events (pagination, sorting).
+ * Refactored to use universal logger pattern (browser-safe, no node: imports).
+ */
 
-interface DashboardLogger {
-  write(entry: DashboardLogEntry): Promise<void>;
-}
+import { createLogger, type Logger } from "./logger";
 
 type DashboardEvent = "pagination" | "sorting";
 
 type DashboardPhase = "start" | "success" | "error";
 
 export interface DashboardLogEntry {
-  timestamp: string;
   event: DashboardEvent;
   phase: DashboardPhase;
   page?: number;
@@ -22,78 +22,16 @@ export interface DashboardLogEntry {
   [key: string]: unknown;
 }
 
-interface DashboardLoggerConfiguration {
-  filePath?: string;
-}
+const logger: Logger = createLogger("dashboard", "logs/dashboard-events.log");
 
-let activeLogger: DashboardLogger = createConsoleLogger();
-let configuredFilePath: string | null = null;
-
-export function configureDashboardLogger(
-  options: DashboardLoggerConfiguration
-): void {
-  const { filePath } = options;
-  configuredFilePath = filePath ?? null;
-
-  if (!isNodeRuntime || !filePath) {
-    activeLogger = createConsoleLogger();
-    return;
-  }
-
-  activeLogger = createFileLogger(filePath);
-}
-
-export function resetDashboardLogger(): void {
-  activeLogger = createConsoleLogger();
-  configuredFilePath = null;
-}
-
+/**
+ * Log a dashboard event
+ *
+ * @param entry - Dashboard log entry (timestamp added automatically by logger)
+ */
 export async function logDashboardEvent(
-  entry: Omit<DashboardLogEntry, "timestamp">
+  entry: DashboardLogEntry
 ): Promise<void> {
-  const payload: DashboardLogEntry = {
-    ...(entry as DashboardLogEntry),
-    timestamp: new Date().toISOString(),
-  };
-
-  try {
-    await activeLogger.write(payload);
-  } catch (error) {
-    if (configuredFilePath) {
-      const details =
-        error instanceof Error ? `${error.name}: ${error.message}` : `${error}`;
-      console.error(
-        "[dashboard] failed to write log",
-        configuredFilePath,
-        details
-      );
-    } else {
-      console.debug("[dashboard]", payload);
-    }
-  }
-}
-
-function createConsoleLogger(): DashboardLogger {
-  return {
-    async write(entry) {
-      console.debug("[dashboard]", entry);
-    },
-  };
-}
-
-function createFileLogger(filePath: string): DashboardLogger {
-  return {
-    async write(entry) {
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, {
-        encoding: "utf8",
-      });
-    },
-  };
-}
-
-if (isNodeRuntime) {
-  configureDashboardLogger({ filePath: DEFAULT_LOG_PATH });
+  const eventName = `${entry.event}:${entry.phase}`;
+  await logger.log(eventName, entry);
 }

@@ -252,58 +252,73 @@ def schedule_endpoint_checks(self) -> int:
 
     now = timezone.now()
     scheduled = 0
+    skipped_tenants = []
+    failed_tenants = []
 
     # Ensure we start from the public schema before iterating tenants.
     connection.set_schema_to_public()  # type: ignore[attr-defined]
     tenants = Client.objects.exclude(schema_name="public")
 
+    audit_logger.info(
+        "Starting endpoint scheduling cycle",
+        extra={
+            "total_tenants": tenants.count(),
+            "timestamp": now.isoformat(),
+        },
+    )
+
     # Collect all endpoints to schedule across all tenants
     all_endpoints_to_schedule = []
 
     for tenant in tenants:
-        with schema_context(tenant.schema_name):
-            # Optimize: Use select_for_update to prevent race conditions
-            # Lock endpoints to prevent concurrent scheduler runs from
-            # scheduling the same endpoint multiple times
-            # NOTE: select_for_update requires a transaction
-            with transaction.atomic():
-                endpoints = Endpoint.objects.select_for_update(skip_locked=True).only(
-                    "id",
-                    "url",
-                    "interval_minutes",
-                    "last_checked_at",
-                    "last_enqueued_at",
-                    "created_at",
-                    "tenant_id",
-                )  # Don't use iterator() inside transaction - it breaks locking
+        try:
+            # Pre-flight check: Verify tenant schema has required tables
+            with schema_context(tenant.schema_name):
+                cursor = connection.cursor()
+                cursor.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                        AND table_name = 'monitors_endpoint'
+                    )
+                """
+                )
+                table_exists = cursor.fetchone()[0]
 
-                for endpoint in endpoints:
-                    audit_logger.debug(
-                        "Inspecting endpoint for scheduling",
+                if not table_exists:
+                    audit_logger.warning(
+                        "Skipping tenant - monitors_endpoint table does not exist",
                         extra={
                             "tenant": tenant.schema_name,
-                            "endpoint_id": str(endpoint.id),
-                            "last_checked_at": (
-                                endpoint.last_checked_at.isoformat()
-                                if endpoint.last_checked_at
-                                else None
-                            ),
-                            "last_enqueued_at": (
-                                endpoint.last_enqueued_at.isoformat()
-                                if endpoint.last_enqueued_at
-                                else None
-                            ),
-                            "interval_minutes": endpoint.interval_minutes,
+                            "reason": "missing_table",
+                            "recommendation": f"Run migrations: python manage.py migrate_schemas --schema={tenant.schema_name}",
                         },
                     )
-                    is_due, reference = _is_endpoint_due(endpoint, now)
-                    if not is_due:
-                        audit_logger.info(
-                            "Endpoint not due",
+                    skipped_tenants.append(tenant.schema_name)
+                    continue
+
+                # Optimize: Use select_for_update to prevent race conditions
+                # Lock endpoints to prevent concurrent scheduler runs from
+                # scheduling the same endpoint multiple times
+                # NOTE: select_for_update requires a transaction
+                with transaction.atomic():
+                    endpoints = Endpoint.objects.select_for_update(skip_locked=True).only(
+                        "id",
+                        "url",
+                        "interval_minutes",
+                        "last_checked_at",
+                        "last_enqueued_at",
+                        "created_at",
+                        "tenant_id",
+                    )  # Don't use iterator() inside transaction - it breaks locking
+
+                    for endpoint in endpoints:
+                        audit_logger.debug(
+                            "Inspecting endpoint for scheduling",
                             extra={
                                 "tenant": tenant.schema_name,
                                 "endpoint_id": str(endpoint.id),
-                                "reference": reference.isoformat(),
                                 "last_checked_at": (
                                     endpoint.last_checked_at.isoformat()
                                     if endpoint.last_checked_at
@@ -317,21 +332,57 @@ def schedule_endpoint_checks(self) -> int:
                                 "interval_minutes": endpoint.interval_minutes,
                             },
                         )
-                        continue
+                        is_due, reference = _is_endpoint_due(endpoint, now)
+                        if not is_due:
+                            audit_logger.info(
+                                "Endpoint not due",
+                                extra={
+                                    "tenant": tenant.schema_name,
+                                    "endpoint_id": str(endpoint.id),
+                                    "reference": reference.isoformat(),
+                                    "last_checked_at": (
+                                        endpoint.last_checked_at.isoformat()
+                                        if endpoint.last_checked_at
+                                        else None
+                                    ),
+                                    "last_enqueued_at": (
+                                        endpoint.last_enqueued_at.isoformat()
+                                        if endpoint.last_enqueued_at
+                                        else None
+                                    ),
+                                    "interval_minutes": endpoint.interval_minutes,
+                                },
+                            )
+                            continue
 
-                    # Update timestamp and collect for scheduling after transaction
-                    endpoint.last_enqueued_at = now
-                    endpoint.save(update_fields=["last_enqueued_at", "updated_at"])
+                        # Update timestamp and collect for scheduling after transaction
+                        endpoint.last_enqueued_at = now
+                        endpoint.save(update_fields=["last_enqueued_at", "updated_at"])
 
-                    all_endpoints_to_schedule.append(
-                        {
-                            "id": str(endpoint.id),
-                            "url": endpoint.url,
-                            "interval_minutes": endpoint.interval_minutes,
-                            "reference": reference,
-                            "tenant_schema": tenant.schema_name,
-                        }
-                    )
+                        all_endpoints_to_schedule.append(
+                            {
+                                "id": str(endpoint.id),
+                                "url": endpoint.url,
+                                "interval_minutes": endpoint.interval_minutes,
+                                "reference": reference,
+                                "tenant_schema": tenant.schema_name,
+                            }
+                        )
+
+        except Exception as e:
+            # Catch any errors for this tenant and continue with others
+            audit_logger.error(
+                "Failed to schedule endpoints for tenant",
+                extra={
+                    "tenant": tenant.schema_name,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "recommendation": "Check tenant schema integrity and run migrations if needed",
+                },
+                exc_info=True,
+            )
+            failed_tenants.append({"schema": tenant.schema_name, "error": str(e)})
+            continue  # Skip this tenant, process others
 
     # All transactions committed and schema contexts exited
     # Now queue tasks outside any database context
@@ -382,8 +433,28 @@ def schedule_endpoint_checks(self) -> int:
             "scheduled": scheduled,
             "task_id": getattr(self.request, "id", None),
             "tenant_count": tenants.count(),
+            "skipped_tenants": len(skipped_tenants),
+            "failed_tenants": len(failed_tenants),
             "run_at": now.isoformat(),
         },
     )
+
+    if skipped_tenants:
+        audit_logger.warning(
+            "Some tenants were skipped due to missing tables",
+            extra={
+                "skipped_count": len(skipped_tenants),
+                "skipped_schemas": skipped_tenants,
+            },
+        )
+
+    if failed_tenants:
+        audit_logger.error(
+            "Some tenants failed during scheduling",
+            extra={
+                "failed_count": len(failed_tenants),
+                "failures": failed_tenants,
+            },
+        )
 
     return scheduled

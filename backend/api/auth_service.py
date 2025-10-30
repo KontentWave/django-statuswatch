@@ -238,7 +238,7 @@ class MultiTenantAuthService:
             # Get the tenant object and switch to it using django-tenants API
             # This is the CORRECT way to switch schemas - it persists across Django ORM calls
             tenant = Client.objects.get(schema_name=schema_name)
-            connection.set_tenant(tenant)
+            connection.set_tenant(tenant)  # type: ignore[attr-defined]  # Added by django-tenants
 
             logger.debug(
                 f"[MULTI-TENANT-AUTH] Switched to tenant schema '{schema_name}' using connection.set_tenant()"
@@ -327,7 +327,7 @@ class MultiTenantAuthService:
             # Reset to public schema
             try:
                 public_tenant = Client.objects.get(schema_name="public")
-                connection.set_tenant(public_tenant)
+                connection.set_tenant(public_tenant)  # type: ignore[attr-defined]  # Added by django-tenants
                 logger.debug("[MULTI-TENANT-AUTH] Reset to public schema")
             except Exception as e:
                 logger.warning(f"[MULTI-TENANT-AUTH] Failed to reset to public schema: {e}")

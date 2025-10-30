@@ -1,14 +1,17 @@
+/**
+ * Endpoint Logger
+ *
+ * Logs endpoint-related events (list, create, delete operations).
+ * Refactored to use universal logger pattern (browser-safe, no node: imports).
+ */
+
 import type { AxiosError } from "axios";
+import { createLogger, type Logger } from "./logger";
 
-const isNodeRuntime =
-  typeof process !== "undefined" && !!process.versions?.node;
-
-interface EndpointLogger {
-  write(entry: EndpointLogEntry): Promise<void>;
-}
+type EndpointAction = "list" | "create" | "delete";
+type EndpointPhase = "start" | "success" | "error";
 
 type EndpointLogEntryBase = {
-  timestamp: string;
   action: EndpointAction;
   phase: EndpointPhase;
   message?: string;
@@ -22,65 +25,27 @@ type EndpointLogEntryBase = {
 
 export type EndpointLogEntry = EndpointLogEntryBase & Record<string, unknown>;
 
-type EndpointLogEntryInput = Omit<EndpointLogEntryBase, "timestamp"> &
-  Record<string, unknown> & { timestamp?: string };
+const logger: Logger = createLogger(
+  "endpoint-client",
+  "logs/endpoint-events.log"
+);
 
-type EndpointAction = "list" | "create" | "delete";
-type EndpointPhase = "start" | "success" | "error";
-
-interface LoggerConfiguration {
-  filePath?: string;
+/**
+ * Log an endpoint event
+ *
+ * @param entry - Endpoint log entry (timestamp added automatically by logger)
+ */
+export async function logEndpointEvent(entry: EndpointLogEntry): Promise<void> {
+  const eventName = `${entry.action}:${entry.phase}`;
+  await logger.log(eventName, entry);
 }
 
-let activeLogger: EndpointLogger = createConsoleLogger();
-let configuredFilePath: string | null = null;
-
-export function configureEndpointLogger(options: LoggerConfiguration): void {
-  const { filePath } = options;
-  configuredFilePath = filePath ?? null;
-
-  if (!isNodeRuntime || !filePath) {
-    activeLogger = createConsoleLogger();
-    return;
-  }
-
-  activeLogger = createFileLogger(filePath);
-}
-
-export function resetEndpointLogger(): void {
-  activeLogger = createConsoleLogger();
-  configuredFilePath = null;
-}
-
-export async function logEndpointEvent(
-  entry: EndpointLogEntryInput
-): Promise<void> {
-  const { action, phase, timestamp, ...rest } = entry;
-  const payload: EndpointLogEntry = {
-    action,
-    phase,
-    ...rest,
-    timestamp: timestamp ?? new Date().toISOString(),
-  };
-
-  try {
-    await activeLogger.write(payload);
-  } catch (error) {
-    // Fallback to console if file logging fails.
-    if (configuredFilePath) {
-      const details =
-        error instanceof Error ? `${error.name}: ${error.message}` : `${error}`;
-      console.error(
-        "[endpoint-client] failed to write log",
-        configuredFilePath,
-        details
-      );
-    } else {
-      console.debug("[endpoint-client]", payload);
-    }
-  }
-}
-
+/**
+ * Serialize Axios error for logging
+ *
+ * @param error - Axios or generic Error
+ * @returns Structured error data
+ */
 export function serializeAxiosError(
   error: AxiosError | Error
 ): Pick<EndpointLogEntry, "errorName" | "errorMessage" | "httpStatus"> {
@@ -98,24 +63,6 @@ export function serializeAxiosError(
   }
 
   return base;
-}
-
-function createConsoleLogger(): EndpointLogger {
-  return {
-    async write(entry) {
-      console.debug("[endpoint-client]", entry);
-    },
-  };
-}
-
-function createFileLogger(filePath: string): EndpointLogger {
-  return {
-    async write(entry) {
-      const fs = await import("node:fs/promises");
-      const line = `${JSON.stringify(entry)}\n`;
-      await fs.appendFile(filePath, line, { encoding: "utf8" });
-    },
-  };
 }
 
 function isAxiosError(error: unknown): error is AxiosError {

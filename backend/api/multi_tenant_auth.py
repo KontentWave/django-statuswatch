@@ -60,7 +60,7 @@ class MultiTenantLoginView(APIView):
     """
 
     # Disable authentication completely - this is a login endpoint (no user yet!)
-    authentication_classes = []
+    authentication_classes: list[type] = []
     permission_classes = [AllowAny]
 
     def post(self, request):

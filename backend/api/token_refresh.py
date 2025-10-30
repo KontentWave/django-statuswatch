@@ -33,8 +33,8 @@ class MultiTenantTokenRefreshView(APIView):
     users exist in tenant schemas but tokens are refreshed from public schema.
     """
 
-    authentication_classes = []  # No authentication required for token refresh
-    permission_classes = []  # Public endpoint
+    authentication_classes: list[type] = []  # No authentication required for token refresh
+    permission_classes: list[type] = []  # Public endpoint
 
     def post(self, request):
         """
