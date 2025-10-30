@@ -36,10 +36,7 @@ export interface SubscriptionLogEntry {
   [key: string]: unknown;
 }
 
-const logger: Logger = createLogger(
-  "subscription",
-  "logs/subscription-events.log"
-);
+const logger: Logger = createLogger("subscription");
 
 /**
  * Log a subscription event

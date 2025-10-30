@@ -22,7 +22,7 @@ export interface DashboardLogEntry {
   [key: string]: unknown;
 }
 
-const logger: Logger = createLogger("dashboard", "logs/dashboard-events.log");
+const logger: Logger = createLogger("dashboard");
 
 /**
  * Log a dashboard event

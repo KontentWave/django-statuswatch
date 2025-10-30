@@ -25,28 +25,25 @@ type EndpointLogEntryBase = {
 
 export type EndpointLogEntry = EndpointLogEntryBase & Record<string, unknown>;
 
-let logger: Logger = createLogger(
-  "endpoint-client",
-  "logs/endpoint-events.log"
-);
+let logger: Logger = createLogger("endpoint-client");
 
 /**
  * Configure endpoint logger (for testing)
- *
- * @param options - Configuration options or log file path string
+ * Note: Browser logger doesn't support file paths, this is a no-op for compatibility
  */
 export function configureEndpointLogger(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   options: string | { filePath: string }
 ): void {
-  const logPath = typeof options === "string" ? options : options.filePath;
-  logger = createLogger("endpoint-client", logPath);
+  // Browser logger doesn't support file configuration, but keep API for compatibility
+  logger = createLogger("endpoint-client");
 }
 
 /**
  * Reset endpoint logger to default (for testing)
  */
 export function resetEndpointLogger(): void {
-  logger = createLogger("endpoint-client", "logs/endpoint-events.log");
+  logger = createLogger("endpoint-client");
 }
 
 /**

@@ -22,7 +22,7 @@ export interface BillingLogEntry {
   [key: string]: unknown;
 }
 
-const logger: Logger = createLogger("billing", "logs/billing-events.log");
+const logger: Logger = createLogger("billing");
 
 /**
  * Log a billing event
