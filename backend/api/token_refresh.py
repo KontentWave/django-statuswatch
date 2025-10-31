@@ -2,23 +2,21 @@
 Multi-tenant compatible token refresh view.
 
 Standard TokenRefreshView tries to validate that the user exists by querying
-auth_user table. In multi-tenant setups, auth_user only exists in tenant schemas,
-not in PUBLIC schema. This causes token refresh to fail when accessed from
-the centralized hub (localhost:5173).
+auth_user table. In multi-tenant setups, this causes issues because:
+1. User validation requires accessing the specific tenant schema
+2. Token blacklist tables exist per-tenant (token_blacklist is in TENANT_APPS)
 
-This custom view skips user validation since:
-1. Token signature already validates authenticity
-2. User existence is checked when token is used (via JWT authentication)
-3. Token blacklist works globally from PUBLIC schema
+This custom view works in the current tenant schema and sets user=None to avoid
+FK validation errors in OutstandingToken creation.
 """
 
+import datetime
 import logging
 
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
 logger = logging.getLogger("api.auth")
@@ -40,6 +38,10 @@ class MultiTenantTokenRefreshView(APIView):
         """
         Refresh an access token using a valid refresh token.
 
+        Multi-tenant note: Token blacklist tables exist in each tenant schema
+        (token_blacklist is in TENANT_APPS per settings_base.py line 55).
+        This view works in the current tenant schema set by TenantMainMiddleware.
+
         Request body:
             {
                 "refresh": "<refresh_token>"
@@ -51,7 +53,6 @@ class MultiTenantTokenRefreshView(APIView):
                 "refresh": "<new_refresh_token>"  # Only if ROTATE_REFRESH_TOKENS=True
             }
         """
-
         refresh_token = request.data.get("refresh")
 
         if not refresh_token:
@@ -65,6 +66,7 @@ class MultiTenantTokenRefreshView(APIView):
 
         try:
             # Parse and validate the refresh token
+            # This checks the blacklist in the current tenant schema
             refresh = RefreshToken(refresh_token)
 
             logger.info(
@@ -75,12 +77,18 @@ class MultiTenantTokenRefreshView(APIView):
             # Generate new access token
             data = {"access": str(refresh.access_token)}
 
+            # Get JWT settings (allow runtime modifications in tests)
+            from django.conf import settings as django_settings
+
+            jwt_config = getattr(django_settings, "SIMPLE_JWT", {})
+            rotate_tokens = jwt_config.get("ROTATE_REFRESH_TOKENS", False)
+            blacklist_after = jwt_config.get("BLACKLIST_AFTER_ROTATION", False)
+
             # If token rotation is enabled, blacklist old token and return new refresh token
-            if api_settings.ROTATE_REFRESH_TOKENS:
-                if api_settings.BLACKLIST_AFTER_ROTATION:
+            if rotate_tokens:
+                if blacklist_after:
                     try:
                         # Manually blacklist the token without validating user exists
-                        # (avoid auth_user query which fails in PUBLIC schema)
                         from django.utils import timezone
                         from rest_framework_simplejwt.token_blacklist.models import (
                             BlacklistedToken,
@@ -91,13 +99,15 @@ class MultiTenantTokenRefreshView(APIView):
                         exp = refresh.get("exp")
 
                         # Get or create outstanding token
+                        # NOTE: user field set to None to avoid FK validation
+                        # The token itself contains user_id claim, so user association is preserved
                         token, created = OutstandingToken.objects.get_or_create(
                             jti=jti,
                             defaults={
                                 "token": str(refresh),
                                 "created_at": timezone.now(),
-                                "expires_at": timezone.datetime.fromtimestamp(exp, tz=timezone.utc),
-                                "user_id": refresh.get("user_id"),
+                                "expires_at": datetime.datetime.fromtimestamp(exp, tz=datetime.UTC),
+                                "user": None,  # Explicitly NULL - FK validation fails in multi-tenant setup
                             },
                         )
 
@@ -127,9 +137,7 @@ class MultiTenantTokenRefreshView(APIView):
 
         except TokenError as e:
             logger.warning(f"[TOKEN-REFRESH] ✗ Invalid or expired token: {str(e)}")
-            return Response(
-                {"error": "Token is invalid or expired"}, status=status.HTTP_401_UNAUTHORIZED
-            )
+            return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
 
         except Exception as e:
             logger.error(f"[TOKEN-REFRESH] ✗ Unexpected error: {e}", exc_info=True)

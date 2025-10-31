@@ -68,7 +68,7 @@ def handle_generic_exception(exc, context):
     )
     logger.error(
         message,
-        exc_info=settings.DEBUG,
+        exc_info=settings.DEBUG,  # Reverted from always True
         extra={
             "request_path": sanitize_log_value(request.path if request else None),
             "request_method": request.method if request else None,

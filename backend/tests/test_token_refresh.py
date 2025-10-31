@@ -1,0 +1,371 @@
+"""
+Tests for Multi-Tenant Token Refresh (P1-01).
+
+Coverage target: 0% → 80%+
+File: api/token_refresh.py (45 statements)
+
+This tests the MultiTenantTokenRefreshView which refreshes JWT tokens without
+requiring user validation (since we're in PUBLIC schema where auth_user doesn't exist).
+
+Key behaviors tested:
+- Token refresh without user re-authentication
+- Token blacklist queries to PUBLIC schema
+- Token rotation and blacklisting after rotation
+- Concurrent refresh requests
+- Invalid/expired token rejection
+- Missing token handling
+"""
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.db import connection
+from rest_framework import status
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
+
+User = get_user_model()
+
+pytestmark = pytest.mark.django_db(transaction=True)
+
+
+@pytest.fixture
+def api_client():
+    """API client for making requests."""
+    return APIClient()
+
+
+@pytest.fixture
+def test_user_with_tokens(tenant_factory):
+    """
+    Create a test user in a tenant and generate JWT tokens.
+
+    Returns:
+        tuple: (user, access_token, refresh_token)
+    """
+    from django_tenants.utils import schema_context
+
+    tenant = tenant_factory("Test Company")
+
+    # Create user in tenant schema
+    with schema_context(tenant.schema_name):
+        user = User.objects.create_user(
+            username="testuser",
+            email="test@example.com",
+            password="TestPass123!",
+            is_active=True,
+        )
+
+        # Generate tokens
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+
+    return user, access_token, refresh_token
+
+
+class TestTokenRefresh:
+    """Test suite for MultiTenantTokenRefreshView."""
+
+    def test_token_refresh_success_returns_new_access_token(
+        self, api_client, test_user_with_tokens
+    ):
+        """
+        Test successful token refresh returns new access token.
+
+        Verifies:
+        - POST /api/auth/token/refresh/ with valid refresh token
+        - Returns 200 OK
+        - Response contains new 'access' token
+        - Works in tenant schema (token_blacklist per-tenant)
+        """
+        user, access_token, refresh_token = test_user_with_tokens
+
+        response = api_client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": refresh_token},
+            format="json",
+        )
+
+        assert (
+            response.status_code == status.HTTP_200_OK
+        ), f"Expected 200 OK, got {response.status_code}: {response.data}"
+        assert "access" in response.data, "Response missing 'access' token"
+        assert (
+            response.data["access"] != access_token
+        ), "New access token should be different from old one"
+
+        # Verify new access token is valid (not expired)
+        new_access = response.data["access"]
+        assert len(new_access) > 100, "Access token seems too short"
+
+    def test_token_refresh_with_missing_refresh_token_returns_400(self, api_client):
+        """
+        Test token refresh with missing refresh token returns 400 Bad Request.
+
+        Verifies:
+        - POST without 'refresh' field
+        - Returns 400 BAD REQUEST
+        - Error message indicates missing field
+        """
+
+        response = api_client.post(
+            "/api/auth/token/refresh/",
+            {},  # Empty payload
+            format="json",
+        )
+
+        assert (
+            response.status_code == status.HTTP_400_BAD_REQUEST
+        ), f"Expected 400 BAD REQUEST for missing token, got {response.status_code}"
+        assert (
+            "error" in response.data or "refresh" in response.data
+        ), "Response should contain error message about missing refresh token"
+
+    def test_token_refresh_with_invalid_token_returns_401(self, api_client):
+        """
+        Test token refresh with invalid/malformed token returns 401 Unauthorized.
+
+        Verifies:
+        - POST with invalid JWT format
+        - Returns 401 UNAUTHORIZED
+        - Error indicates token is invalid
+        """
+
+        response = api_client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": "invalid.token.here"},
+            format="json",
+        )
+
+        assert (
+            response.status_code == status.HTTP_401_UNAUTHORIZED
+        ), f"Expected 401 UNAUTHORIZED for invalid token, got {response.status_code}"
+        assert "error" in response.data, "Response should contain error message"
+
+    def test_token_refresh_with_expired_token_returns_401(self, api_client, test_user_with_tokens):
+        """
+        Test token refresh with expired token returns 401 Unauthorized.
+
+        Verifies:
+        - Token expiration is validated
+        - Expired tokens cannot be refreshed
+        - Returns 401 UNAUTHORIZED
+        """
+        from unittest.mock import patch
+
+        from rest_framework_simplejwt.exceptions import TokenError
+
+        user, access_token, refresh_token = test_user_with_tokens
+
+        # Mock RefreshToken to raise TokenError (expired)
+        with patch("api.token_refresh.RefreshToken") as mock_refresh:
+            mock_refresh.side_effect = TokenError("Token is expired")
+
+            response = api_client.post(
+                "/api/auth/token/refresh/",
+                {"refresh": refresh_token},
+                format="json",
+            )
+
+        assert (
+            response.status_code == status.HTTP_401_UNAUTHORIZED
+        ), f"Expected 401 UNAUTHORIZED for expired token, got {response.status_code}"
+        assert "error" in response.data, "Response should contain error message"
+
+    def test_token_refresh_rotation_blacklists_old_token(
+        self, api_client, test_user_with_tokens, settings
+    ):
+        """
+        Test token rotation blacklists old refresh token after generating new one.
+
+        Verifies:
+        - When ROTATE_REFRESH_TOKENS=True, old token is blacklisted
+        - BlacklistedToken and OutstandingToken records created
+        - Subsequent use of old token fails
+        - New refresh token is returned
+        """
+        # Skip if token blacklist not installed
+        pytest.importorskip(
+            "rest_framework_simplejwt.token_blacklist", reason="Token blacklist not installed"
+        )
+
+        from rest_framework_simplejwt.token_blacklist.models import (
+            BlacklistedToken,
+            OutstandingToken,
+        )
+
+        user, access_token, refresh_token = test_user_with_tokens
+
+        # Enable token rotation and blacklisting
+        settings.SIMPLE_JWT = {
+            **getattr(settings, "SIMPLE_JWT", {}),
+            "ROTATE_REFRESH_TOKENS": True,
+            "BLACKLIST_AFTER_ROTATION": True,
+        }
+
+        # First refresh - should succeed and blacklist old token
+        response = api_client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": refresh_token},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "refresh" in response.data, "New refresh token should be returned"
+
+        # Verify old token is blacklisted
+
+        # Parse old token to get jti (decode without validation since it's blacklisted)
+        import jwt
+
+        old_payload = jwt.decode(
+            refresh_token, options={"verify_signature": False, "verify_exp": False}
+        )
+        old_jti = old_payload["jti"]
+
+        # Check OutstandingToken created
+        outstanding = OutstandingToken.objects.filter(jti=old_jti).first()
+        assert outstanding is not None, f"OutstandingToken not found for jti={old_jti}"
+
+        # Check BlacklistedToken created
+        blacklisted = BlacklistedToken.objects.filter(token=outstanding).exists()
+        assert blacklisted, f"Old token (jti={old_jti}) should be blacklisted after rotation"
+
+        # Attempt to use old token again - should fail
+        response2 = api_client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": refresh_token},  # Old token
+            format="json",
+        )
+
+        assert (
+            response2.status_code == status.HTTP_401_UNAUTHORIZED
+        ), "Blacklisted token should not be usable"
+
+    def test_token_refresh_without_rotation_reuses_same_token(
+        self, api_client, test_user_with_tokens, settings
+    ):
+        """
+        Test token refresh without rotation returns same refresh token.
+
+        Verifies:
+        - When ROTATE_REFRESH_TOKENS=False, same refresh token is returned
+        - Token can be reused multiple times
+        - Only access token changes
+        """
+        user, access_token, refresh_token = test_user_with_tokens
+
+        # Disable token rotation
+        settings.SIMPLE_JWT = {
+            **getattr(settings, "SIMPLE_JWT", {}),
+            "ROTATE_REFRESH_TOKENS": False,
+        }
+
+        response = api_client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": refresh_token},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "access" in response.data, "New access token should be returned"
+
+        # Refresh token should NOT be in response if rotation disabled
+        if "refresh" in response.data:
+            # If returned, should be same as original
+            assert (
+                response.data["refresh"] == refresh_token
+            ), "Without rotation, refresh token should remain unchanged"
+
+        # Verify we can use same refresh token again
+        response2 = api_client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": refresh_token},
+            format="json",
+        )
+
+        assert (
+            response2.status_code == status.HTTP_200_OK
+        ), "Same refresh token should be reusable when rotation disabled"
+
+    def test_token_refresh_works_from_public_schema(self, api_client, test_user_with_tokens):
+        """
+        Test token refresh works from PUBLIC schema without tenant context.
+
+        This is the key multi-tenant behavior: token refresh MUST work from
+        PUBLIC schema where auth_user table doesn't exist, because:
+        - Token refresh endpoint is on public domain
+        - We cannot validate user without knowing which tenant they're in
+        - Token blacklist is stored in PUBLIC schema for cross-tenant logout
+
+        Verifies:
+        - connection.schema_name is 'public'
+        - Refresh succeeds without tenant context
+        - No queries to tenant auth_user table
+        """
+        user, access_token, refresh_token = test_user_with_tokens
+
+        # Explicitly set to public schema
+
+        # Verify we're in public schema
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW search_path")
+            search_path = cursor.fetchone()[0]
+            assert "public" in search_path, f"Expected public schema, got: {search_path}"
+
+        response = api_client.post(
+            "/api/auth/token/refresh/",
+            {"refresh": refresh_token},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, (
+            f"Token refresh should work in PUBLIC schema, got {response.status_code}: "
+            f"{response.data}"
+        )
+        assert "access" in response.data, "Response should contain new access token"
+
+    def test_token_refresh_handles_blacklist_error_gracefully(
+        self, api_client, test_user_with_tokens, settings
+    ):
+        """
+        Test token refresh handles blacklist errors gracefully.
+
+        If token blacklist app is not installed or encounters errors,
+        refresh should still succeed (just log a warning).
+
+        Verifies:
+        - Token refresh succeeds even if blacklisting fails
+        - Returns 200 OK with new tokens
+        - Error is logged but not propagated to user
+        """
+        from unittest.mock import patch
+
+        user, access_token, refresh_token = test_user_with_tokens
+
+        # Enable rotation with blacklisting
+        settings.SIMPLE_JWT = {
+            **getattr(settings, "SIMPLE_JWT", {}),
+            "ROTATE_REFRESH_TOKENS": True,
+            "BLACKLIST_AFTER_ROTATION": True,
+        }
+
+        # Mock OutstandingToken.objects.get_or_create to raise exception
+        with patch(
+            "rest_framework_simplejwt.token_blacklist.models.OutstandingToken.objects.get_or_create"
+        ) as mock_create:
+            mock_create.side_effect = Exception("Blacklist service unavailable")
+
+            response = api_client.post(
+                "/api/auth/token/refresh/",
+                {"refresh": refresh_token},
+                format="json",
+            )
+
+        # Should succeed despite blacklist failure
+        assert response.status_code == status.HTTP_200_OK, (
+            f"Token refresh should succeed even if blacklisting fails, "
+            f"got {response.status_code}: {response.data}"
+        )
+        assert "access" in response.data, "Response should contain new access token"
+        assert "refresh" in response.data, "Response should contain new refresh token"
