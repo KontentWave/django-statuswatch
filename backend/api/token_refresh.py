@@ -107,7 +107,8 @@ class MultiTenantTokenRefreshView(APIView):
                                 "token": str(refresh),
                                 "created_at": timezone.now(),
                                 "expires_at": datetime.datetime.fromtimestamp(exp, tz=datetime.UTC),
-                                "user": None,  # Explicitly NULL - FK validation fails in multi-tenant setup
+                                # Explicitly NULL - FK validation fails in multi-tenant setup
+                                "user": None,
                             },
                         )
 

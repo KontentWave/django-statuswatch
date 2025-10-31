@@ -50,7 +50,8 @@ class MultiTenantAuthService:
             email: The email to search for
 
         Returns:
-            List of dicts with keys: 'schema_name', 'tenant_name', 'tenant_id', 'user_id', 'username'
+            List of dicts with keys: 'schema_name', 'tenant_name',
+            'tenant_id', 'user_id', 'username'
         """
         logger.info(f"[MULTI-TENANT-AUTH] Searching all tenants for email: {email}")
 
@@ -241,7 +242,8 @@ class MultiTenantAuthService:
             connection.set_tenant(tenant)  # type: ignore[attr-defined]  # Added by django-tenants
 
             logger.debug(
-                f"[MULTI-TENANT-AUTH] Switched to tenant schema '{schema_name}' using connection.set_tenant()"
+                f"[MULTI-TENANT-AUTH] Switched to tenant schema '{schema_name}' "
+                f"using connection.set_tenant()"
             )
 
             # Authenticate using Django's authentication system

@@ -8,7 +8,6 @@ from datetime import timedelta
 from django.conf import settings
 from django.db import connection
 from django.utils import timezone
-from django_tenants.utils import get_tenant_model
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -152,6 +151,8 @@ def metrics(request):
 
     # Tenant statistics
     try:
+        from django_tenants.utils import get_tenant_model
+
         Tenant = get_tenant_model()
         tenant_count = Tenant.objects.exclude(schema_name="public").count()
         metrics_data["tenants"] = {
@@ -159,15 +160,15 @@ def metrics(request):
         }
     except Exception as e:
         logger.warning(f"Failed to fetch tenant metrics: {e}")
-        metrics_data["tenants"] = {"error": str(e)}
-
-    # Endpoint statistics (across all tenants)
+        metrics_data["tenants"] = {"error": str(e)}  # Endpoint statistics (across all tenants)
     try:
         total_endpoints = 0
         active_endpoints = 0
         healthy_endpoints = 0
 
         # Iterate through tenants to get aggregate stats
+        from django_tenants.utils import get_tenant_model
+
         Tenant = get_tenant_model()
         for tenant in Tenant.objects.exclude(schema_name="public"):
             from django_tenants.utils import schema_context
@@ -224,6 +225,7 @@ def metrics(request):
     try:
         one_hour_ago = timezone.now() - timedelta(hours=1)
         recent_checks = 0
+        from django_tenants.utils import get_tenant_model
 
         Tenant = get_tenant_model()
         for tenant in Tenant.objects.exclude(schema_name="public"):
