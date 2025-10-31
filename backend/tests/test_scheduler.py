@@ -4,9 +4,8 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 from django_tenants.utils import schema_context
-
-from ..models import Endpoint
-from ..tasks import PENDING_REQUEUE_GRACE, schedule_endpoint_checks
+from monitors.models import Endpoint
+from monitors.tasks import PENDING_REQUEUE_GRACE, schedule_endpoint_checks
 
 
 @pytest.fixture(autouse=True)

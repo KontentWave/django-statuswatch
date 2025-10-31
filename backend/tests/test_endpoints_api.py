@@ -4,11 +4,10 @@ from pathlib import Path
 import pytest
 from django.contrib.auth import get_user_model
 from django_tenants.utils import schema_context
+from monitors.models import Endpoint
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 from tenants.models import Client
-
-from ..models import Endpoint
 
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
