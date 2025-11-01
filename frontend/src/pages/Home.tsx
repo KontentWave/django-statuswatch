@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { STRIPE_PK } from "@/lib/config";
 import { storeAuthTokens } from "@/lib/auth";
 import { logAuthEvent } from "@/lib/auth-logger";
+import { initiateTenantSessionTransfer } from "@/lib/tenant-session";
 
 export default function Home() {
   const loginDemo = async () => {
@@ -36,24 +37,22 @@ export default function Home() {
       });
 
       // Redirect to tenant subdomain
-      if (data.tenant_domain) {
-        const port = window.location.port || "5173";
-        const protocol = window.location.protocol;
-
-        // Extract hostname without port (in case backend returns domain with port)
-        const hostname = data.tenant_domain.split(":")[0];
-        const tenantUrl = `${protocol}//${hostname}:${port}/dashboard`;
-
-        logAuthEvent("NAVIGATION_TO_DASHBOARD", {
-          from: "homepage",
+      if (
+        data.tenant_domain &&
+        initiateTenantSessionTransfer({
+          accessToken: data.access,
+          refreshToken: data.refresh,
+          tenantDomain: data.tenant_domain,
+          tenantName: data.tenant_name,
+          tenantSchema: data.tenant_schema,
           username: "jwt",
-          tenant: data.tenant_name,
-          redirectTo: tenantUrl,
-        });
+          source: "homepage_demo",
+        })
+      ) {
+        return;
+      }
 
-        console.log(`[HOMEPAGE] Redirecting to: ${tenantUrl}`);
-        window.location.href = tenantUrl;
-      } else {
+      {
         toast.error("No tenant domain in response");
       }
     } catch (error: unknown) {

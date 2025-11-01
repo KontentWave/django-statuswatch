@@ -89,10 +89,11 @@ def test_create_checkout_session_returns_stripe_url(mock_create, tenant_user, ca
     assert "customer_email" not in kwargs
     assert kwargs["metadata"]["tenant_schema"] == "test_tenant"
     assert kwargs["metadata"]["user_id"] == str(tenant_user.id)
+    # New resolver uses tenant domain matching request host (test.localhost)
     assert kwargs["success_url"] == (
-        "https://app.statuswatch.local/billing/success?session_id={CHECKOUT_SESSION_ID}"
+        "https://test.localhost/billing/success?session_id={CHECKOUT_SESSION_ID}"
     )
-    assert kwargs["cancel_url"] == "https://app.statuswatch.local/billing/cancel"
+    assert kwargs["cancel_url"] == "https://test.localhost/billing/cancel"
 
     checkout_records = [record for record in caplog.records if record.name == "payments.checkout"]
     log_messages = [record.getMessage() for record in checkout_records]
@@ -239,10 +240,48 @@ def test_create_portal_session_returns_stripe_url(mock_create, tenant_user):
     assert response.status_code == 201
     assert response.json() == {"url": "https://stripe.test/portal/bps_test_123"}
 
+    # New resolver uses tenant domain matching request host (test.localhost)
     mock_create.assert_called_once_with(
         customer="cus_test_123",
-        return_url="https://app.statuswatch.local/billing",
+        return_url="https://test.localhost/billing",
     )
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    STRIPE_SECRET_KEY="sk_test_secret",
+    FRONTEND_URL="https://localhost:5173",
+)
+@patch("payments.views.stripe.billing_portal.Session.create")
+def test_portal_session_prefers_configured_hostname_port(mock_create, tenant_user):
+    """Billing portal should honor tenant domain that matches configured hostname."""
+
+    mock_create.return_value = MagicMock(
+        id="bps_test_pref",
+        url="https://stripe.test/portal/bps_test_pref",
+    )
+
+    client_model = Client.objects.get(schema_name="test_tenant")
+    client_model.domains.all().delete()
+    client_model.domains.create(domain="test.statuswatch.local", is_primary=False)
+    client_model.domains.create(domain="test.statuswatch.local:5173", is_primary=False)
+    client_model.domains.create(domain="test.localhost", is_primary=False)
+    client_model.domains.create(domain="test.localhost:5173", is_primary=True)
+
+    Client.objects.filter(schema_name="test_tenant").update(
+        stripe_customer_id="cus_test_pref",
+        subscription_status="pro",
+    )
+
+    api_client = _authenticated_client(tenant_user)
+    api_client.defaults["HTTP_HOST"] = "test.localhost:5173"
+
+    response = api_client.post("/api/billing/create-portal-session/", format="json")
+
+    assert response.status_code == 201
+    mock_create.assert_called_once()
+    _, kwargs = mock_create.call_args
+    assert kwargs["return_url"] == "https://test.localhost:5173/billing"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -635,7 +674,7 @@ def test_create_checkout_session_tenant_context_in_metadata(tenant_user):
 )
 @patch("payments.views.stripe.checkout.Session.create")
 def test_create_checkout_session_urls_use_frontend_url(mock_create, tenant_user):
-    """Success and cancel URLs use configured FRONTEND_URL."""
+    """Success and cancel URLs use tenant domain matching request host."""
 
     mock_create.return_value = MagicMock(
         id="cs_test_urls",
@@ -653,9 +692,10 @@ def test_create_checkout_session_urls_use_frontend_url(mock_create, tenant_user)
     mock_create.assert_called_once()
 
     _, kwargs = mock_create.call_args
-    assert kwargs["success_url"].startswith("https://app.statuswatch.local/billing/success")
+    # New resolver uses tenant domain matching request host (test.localhost)
+    assert kwargs["success_url"].startswith("https://test.localhost/billing/success")
     assert "{CHECKOUT_SESSION_ID}" in kwargs["success_url"]
-    assert kwargs["cancel_url"] == "https://app.statuswatch.local/billing/cancel"
+    assert kwargs["cancel_url"] == "https://test.localhost/billing/cancel"
 
 
 @pytest.mark.django_db(transaction=True)

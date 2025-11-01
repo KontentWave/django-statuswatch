@@ -445,6 +445,14 @@ LOGGING = {
             "backupCount": 5,
             "formatter": "verbose",
         },
+        "file_frontend_resolution": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "frontend_resolution.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
     },
     "loggers": {
         "django": {
@@ -519,6 +527,11 @@ LOGGING = {
         },
         "payments.cancellations": {
             "handlers": ["console", "file_cancellations"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "payments.frontend_resolver": {
+            "handlers": ["file_frontend_resolution"],
             "level": "INFO",
             "propagate": False,
         },

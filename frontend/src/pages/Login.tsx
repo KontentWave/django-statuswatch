@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { AxiosError } from "axios";
@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { customZodResolver } from "@/lib/zodResolver";
 import { storeAuthTokens } from "@/lib/auth";
 import { logAuthEvent } from "@/lib/auth-logger";
+import { initiateTenantSessionTransfer } from "@/lib/tenant-session";
 
 const loginSchema = z.object({
   email: z
@@ -52,6 +53,8 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [formError, setFormError] = useState<string | null>(null);
+  const [isApplyingTransfer, setIsApplyingTransfer] = useState(false);
+  const transferHandledRef = useRef(false);
 
   // Tenant selection state
   const [showTenantSelector, setShowTenantSelector] = useState(false);
@@ -61,6 +64,68 @@ export default function LoginPage() {
     email: string;
     password: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (transferHandledRef.current || typeof window === "undefined") {
+      return;
+    }
+
+    const hash = window.location.hash;
+    if (!hash || !hash.includes("session=")) {
+      return;
+    }
+
+    const normalizedHash = hash.startsWith("#") ? hash.slice(1) : hash;
+    const params = new URLSearchParams(normalizedHash);
+    const encodedPayload = params.get("session");
+    if (!encodedPayload) {
+      return;
+    }
+
+    transferHandledRef.current = true;
+    setIsApplyingTransfer(true);
+
+    try {
+      const decoded = JSON.parse(atob(encodedPayload)) as {
+        access?: string;
+        refresh?: string | null;
+        tenant_schema?: string | null;
+        tenant_name?: string | null;
+        username?: string | null;
+        source?: string | null;
+      };
+
+      if (!decoded?.access) {
+        throw new Error("Transfer payload missing access token.");
+      }
+
+      storeAuthTokens({
+        access: decoded.access,
+        refresh: decoded.refresh ?? null,
+      });
+
+      logAuthEvent("TENANT_TRANSFER_APPLIED", {
+        tenant_schema: decoded.tenant_schema,
+        tenant_name: decoded.tenant_name,
+        hasRefresh: !!decoded.refresh,
+        source: params.get("source") ?? decoded.source ?? "unknown",
+      });
+
+      window.history.replaceState(null, "", window.location.pathname);
+      void navigate({ to: "/dashboard", replace: true });
+    } catch (error) {
+      logAuthEvent("TENANT_TRANSFER_FAILED", {
+        source: params.get("source") ?? "unknown",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      window.history.replaceState(null, "", window.location.pathname);
+      setFormError(
+        "We couldn't finalize your sign-in automatically. Please sign in again."
+      );
+    } finally {
+      setIsApplyingTransfer(false);
+    }
+  }, [navigate]);
 
   const registrationMessage = useMemo(() => {
     const state = location.state;
@@ -142,34 +207,34 @@ export default function LoginPage() {
         tenant: data?.tenant_name,
       });
 
-      // Redirect to tenant subdomain
+      let transferInitiated = false;
       if (data?.tenant_domain) {
-        const port = window.location.port || "5173";
-        const protocol = window.location.protocol;
-
-        // Extract hostname without port (in case backend returns domain with port)
-        const hostname = data.tenant_domain.split(":")[0];
-        const tenantUrl = `${protocol}//${hostname}:${port}/dashboard`;
-
-        logAuthEvent("NAVIGATION_TO_DASHBOARD", {
-          from: "login_page",
+        transferInitiated = initiateTenantSessionTransfer({
+          accessToken,
+          refreshToken: data?.refresh,
+          tenantDomain: data.tenant_domain,
+          tenantName: data?.tenant_name,
+          tenantSchema: data?.tenant_schema,
           username: values.email,
-          destination: tenantUrl,
-          tenant: data.tenant_name,
+          source: "login_page",
         });
-
-        console.log(`[LOGIN] Redirecting to tenant subdomain: ${tenantUrl}`);
-        window.location.href = tenantUrl;
-      } else {
-        // Fallback: navigate within same origin
-        const destination = (redirectTo ?? "/dashboard") as "/dashboard";
-        logAuthEvent("NAVIGATION_TO_DASHBOARD", {
-          from: "login_page",
-          username: values.email,
-          destination,
-        });
-        await navigate({ to: destination, replace: true });
       }
+
+      if (transferInitiated) {
+        setIsApplyingTransfer(true);
+        return;
+      }
+
+      setIsApplyingTransfer(false);
+
+      // Fallback: navigate within same origin
+      const destination = (redirectTo ?? "/dashboard") as "/dashboard";
+      logAuthEvent("NAVIGATION_TO_DASHBOARD", {
+        from: "login_page",
+        username: values.email,
+        destination,
+      });
+      await navigate({ to: destination, replace: true });
     } catch (err) {
       const error = err as AxiosError<LoginApiResponse>;
 
@@ -200,6 +265,7 @@ export default function LoginPage() {
         error: errorMessage,
         source: "login_page",
       });
+      setIsApplyingTransfer(false);
       setFormError(errorMessage);
     }
   };
@@ -268,9 +334,10 @@ export default function LoginPage() {
         <button
           type="submit"
           className="w-full rounded bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={isSubmitting}
+          disabled={isSubmitting || isApplyingTransfer}
+          aria-disabled={isSubmitting || isApplyingTransfer}
         >
-          {isSubmitting ? "Signing In…" : "Sign In"}
+          {isSubmitting || isApplyingTransfer ? "Signing In…" : "Sign In"}
         </button>
       </form>
 
@@ -352,25 +419,25 @@ export default function LoginPage() {
                   tenant: data?.tenant_name,
                 });
 
-                // Redirect to tenant subdomain
+                let transferStarted = false;
                 if (data?.tenant_domain) {
-                  const port = window.location.port || "5173";
-                  const protocol = window.location.protocol;
-                  const hostname = data.tenant_domain.split(":")[0];
-                  const tenantUrl = `${protocol}//${hostname}:${port}/dashboard`;
-
-                  logAuthEvent("NAVIGATION_TO_DASHBOARD", {
-                    from: "tenant_selector",
+                  transferStarted = initiateTenantSessionTransfer({
+                    accessToken,
+                    refreshToken: data?.refresh,
+                    tenantDomain: data.tenant_domain,
+                    tenantName: data?.tenant_name,
+                    tenantSchema: data?.tenant_schema,
                     username: loginCredentials.email,
-                    destination: tenantUrl,
-                    tenant: data.tenant_name,
+                    source: "tenant_selector",
                   });
-
-                  console.log(
-                    `[LOGIN] Redirecting to tenant subdomain: ${tenantUrl}`
-                  );
-                  window.location.href = tenantUrl;
                 }
+
+                if (transferStarted) {
+                  setIsApplyingTransfer(true);
+                  return;
+                }
+
+                setIsApplyingTransfer(false);
               } catch (err) {
                 const error = err as AxiosError<LoginApiResponse>;
 
@@ -401,10 +468,11 @@ export default function LoginPage() {
                   selected_tenant: selectedTenant,
                   error: errorMessage,
                 });
+                setIsApplyingTransfer(false);
                 setFormError(errorMessage);
               }
             }}
-            disabled={!selectedTenant}
+            disabled={!selectedTenant || isApplyingTransfer}
             className="w-full rounded bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             {selectedTenant

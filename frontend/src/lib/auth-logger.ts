@@ -20,7 +20,11 @@ type AuthEventType =
   | "MULTIPLE_TENANTS_FOUND"
   | "TENANT_SELECTED"
   | "TENANT_LOGIN_FAILED"
-  | "TENANT_SELECTOR_CANCELLED";
+  | "TENANT_SELECTOR_CANCELLED"
+  | "TENANT_TRANSFER_INITIATED"
+  | "TENANT_TRANSFER_APPLIED"
+  | "TENANT_TRANSFER_FAILED"
+  | "TENANT_TRANSFER_SKIPPED";
 
 interface AuthLogEntry {
   timestamp: string;
@@ -81,14 +85,18 @@ function getEventStyle(event: AuthEventType): string {
     case "TOKEN_STORED":
     case "NAVIGATION_TO_DASHBOARD":
     case "TENANT_SELECTED":
+    case "TENANT_TRANSFER_APPLIED":
       return "color: #10b981; font-weight: bold;"; // green
     case "LOGIN_FAILED":
     case "NAVIGATION_BLOCKED":
     case "TENANT_LOGIN_FAILED":
+    case "TENANT_TRANSFER_FAILED":
       return "color: #ef4444; font-weight: bold;"; // red
     case "LOGOUT":
     case "TOKEN_CLEARED":
     case "TENANT_SELECTOR_CANCELLED":
+    case "TENANT_TRANSFER_INITIATED":
+    case "TENANT_TRANSFER_SKIPPED":
       return "color: #f59e0b; font-weight: bold;"; // orange
     case "LOGIN_ATTEMPT":
     case "NAVIGATION_TO_LOGIN":

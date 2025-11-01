@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+from urllib.parse import urlsplit
 
 import stripe
 from api.audit_log import AuditEvent, log_audit_event
@@ -8,6 +9,7 @@ from api.exceptions import ConfigurationError, InvalidPaymentMethodError, Paymen
 from api.logging_utils import sanitize_log_value
 from api.throttles import BillingRateThrottle
 from django.conf import settings
+from django.core.exceptions import DisallowedHost
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,6 +21,7 @@ from tenants.models import Client, SubscriptionStatus
 logger = logging.getLogger(__name__)
 checkout_logger = logging.getLogger("payments.checkout")
 billing_logger = logging.getLogger("payments.billing")
+frontend_resolver_logger = logging.getLogger("payments.frontend_resolver")
 webhook_logger = logging.getLogger("payments.webhooks")
 subscription_logger = logging.getLogger("payments.subscriptions")
 webhook_debug_logger = logging.getLogger("payments.webhooks.debug")
@@ -53,9 +56,20 @@ def create_checkout_session(request):
     currency = request.data.get("currency", "usd")
     name = request.data.get("name", "Test payment")
 
-    domain = request.build_absolute_uri("/").rstrip("/")
-    success_url = f"{domain}/?success=true"
-    cancel_url = f"{domain}/?canceled=true"
+    base_frontend_url, frontend_source = _resolve_frontend_base_url(request)
+
+    logger.info(
+        "Resolved checkout redirect base URL",
+        extra={
+            "event": "checkout_redirect_base_resolved",
+            "base_frontend_url": base_frontend_url,
+            "source": frontend_source,
+            "request_host": request.get_host(),
+        },
+    )
+
+    success_url = f"{base_frontend_url}/?success=true"
+    cancel_url = f"{base_frontend_url}/?canceled=true"
 
     try:
         session = stripe.checkout.Session.create(
@@ -201,28 +215,18 @@ class BillingCheckoutSessionView(APIView):
         sanitized_tenant = sanitize_log_value(tenant_schema)
         sanitized_customer = sanitize_log_value(tenant_customer_id)
 
-        # Use FRONTEND_URL setting if configured, otherwise fall back to request host
-        # This allows tests to override the URL and supports multi-tenant deployments
-        if hasattr(settings, "FRONTEND_URL") and settings.FRONTEND_URL:
-            base_frontend_url = settings.FRONTEND_URL.rstrip("/")
-            host = "configured"  # For logging
-            protocol = "configured"
-        else:
-            # Fallback: use current request host with https protocol
-            protocol = "https"
-            host = request.get_host()
-            base_frontend_url = f"{protocol}://{host}"
+        base_frontend_url, frontend_source = _resolve_frontend_base_url(request, tenant)
 
         success_url = f"{base_frontend_url}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base_frontend_url}/billing/cancel"
 
         billing_logger.info(
             f"[STRIPE-CHECKOUT] Creating checkout session with redirect URLs | "
-            f"host={host} success_url={success_url} cancel_url={cancel_url}",
+            f"base={base_frontend_url} success_url={success_url} cancel_url={cancel_url}",
             extra={
                 "event": "stripe_checkout_urls",
-                "host": host,
-                "protocol": protocol,
+                "resolution_source": frontend_source,
+                "request_host": request.get_host(),
                 "success_url": success_url,
                 "cancel_url": cancel_url,
                 "tenant_schema": sanitized_tenant,
@@ -494,34 +498,43 @@ class BillingPortalSessionView(APIView):
 
         stripe.api_key = settings.STRIPE_SECRET_KEY
 
-        # Use FRONTEND_URL setting if configured, otherwise fall back to request host
-        # This allows tests to override the URL and supports multi-tenant deployments
-        if hasattr(settings, "FRONTEND_URL") and settings.FRONTEND_URL:
-            base_frontend_url = settings.FRONTEND_URL.rstrip("/")
-            host = "configured"  # For logging
-            protocol = "configured"
-        else:
-            # Fallback: use current request host with https protocol
-            protocol = "https"
-            host = request.get_host()
-            base_frontend_url = f"{protocol}://{host}"
-
+        base_frontend_url, frontend_source = _resolve_frontend_base_url(request, tenant)
         return_url = f"{base_frontend_url}/billing"
 
+        try:
+            request_host = request.get_host()
+        except DisallowedHost:
+            request_host = request.META.get("HTTP_HOST", "")
+
+        sanitized_base = sanitize_log_value(base_frontend_url)
+        sanitized_return = sanitize_log_value(return_url)
+        sanitized_host = sanitize_log_value(request_host)
+
         billing_logger.info(
-            f"[STRIPE-PORTAL] Creating billing portal with return URL | host={host} return_url={return_url}",
+            "[STRIPE-PORTAL] Creating billing portal with return URL | base=%s return_url=%s source=%s",
+            sanitized_base,
+            sanitized_return,
+            frontend_source,
             extra={
                 **log_context,
-                "host": host,
-                "protocol": protocol,
-                "return_url": return_url,
+                "status": "preflight",
+                "base_frontend_url": sanitized_base,
+                "return_url": sanitized_return,
+                "resolution_source": frontend_source,
+                "request_host": sanitized_host,
             },
         )
 
         try:
             billing_logger.info(
                 "Creating Stripe billing portal session",
-                extra={**log_context, "status": "start"},
+                extra={
+                    **log_context,
+                    "status": "start",
+                    "base_frontend_url": sanitized_base,
+                    "return_url": sanitized_return,
+                    "resolution_source": frontend_source,
+                },
             )
             session = stripe.billing_portal.Session.create(
                 customer=tenant_customer_id,
@@ -533,6 +546,9 @@ class BillingPortalSessionView(APIView):
                 **log_context,
                 "status": "success",
                 "session_id": sanitized_session,
+                "base_frontend_url": sanitized_base,
+                "return_url": sanitized_return,
+                "resolution_source": frontend_source,
             }
             billing_logger.info(
                 "Created Stripe billing portal session | tenant=%s user_id=%s session_id=%s",
@@ -806,6 +822,151 @@ class CancelSubscriptionView(APIView):
         )
 
         return Response({"plan": SubscriptionStatus.FREE}, status=status.HTTP_200_OK)
+
+
+def _resolve_frontend_base_url(request, tenant=None) -> tuple[str, str]:
+    """Resolve the SPA base URL used for Stripe redirects."""
+
+    configured_url = getattr(settings, "FRONTEND_URL", "") or ""
+    parsed_config = urlsplit(configured_url) if configured_url else None
+
+    configured_scheme = parsed_config.scheme if parsed_config else None
+    configured_hostname = parsed_config.hostname if parsed_config else None
+    configured_port = parsed_config.port if parsed_config else None
+
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
+    scheme = configured_scheme or (
+        "https" if request.is_secure() or forwarded_proto == "https" else request.scheme or "https"
+    )
+
+    try:
+        request_host = request.get_host()
+    except DisallowedHost:
+        request_host = request.META.get("HTTP_HOST", "") or (configured_hostname or "")
+    host_only = (
+        request_host.split(":", 1)[0] if request_host else (configured_hostname or "localhost")
+    )
+
+    def build_url(host: str, port: int | None = None) -> str:
+        if port and port not in (80, 443):
+            return f"{scheme}://{host}:{port}".rstrip("/")
+        return f"{scheme}://{host}".rstrip("/")
+
+    tenant_schema = getattr(tenant, "schema_name", "public") if tenant else "public"
+
+    if tenant and tenant_schema != "public":
+        tenant_domains = getattr(tenant, "domains", None)
+        if tenant_domains is not None:
+            domain_records = list(tenant_domains.order_by("id"))
+            best_choice: tuple | None = None
+            best_rank: tuple[int, int, int, int, int] | None = None
+            candidate_rows: list[dict[str, object]] = []
+
+            for record in domain_records:
+                domain_value = record.domain or ""
+                host_part, port_fragment = (
+                    domain_value.split(":", 1) if ":" in domain_value else (domain_value, None)
+                )
+                try:
+                    domain_port = int(port_fragment) if port_fragment else None
+                except ValueError:
+                    domain_port = None
+
+                if configured_port is not None:
+                    port_penalty = 0 if domain_port == configured_port else 1
+                else:
+                    port_penalty = 0 if domain_port is None else 1
+
+                host_match_penalty = 0 if host_part == host_only else 1
+                suffix_penalty = (
+                    0 if configured_hostname and host_part.endswith(configured_hostname) else 1
+                )
+                primary_penalty = 0 if getattr(record, "is_primary", False) else 1
+                record_id = getattr(record, "id", 0) or 0
+                rank = (
+                    port_penalty,
+                    host_match_penalty,
+                    suffix_penalty,
+                    primary_penalty,
+                    record_id,
+                )
+
+                candidate_rows.append(
+                    {
+                        "domain": sanitize_log_value(domain_value),
+                        "host": sanitize_log_value(host_part),
+                        "port": domain_port,
+                        "is_primary": getattr(record, "is_primary", False),
+                        "rank": rank,
+                        "matches_request_host": host_part == host_only,
+                        "matches_configured_suffix": bool(
+                            configured_hostname and host_part.endswith(configured_hostname)
+                        ),
+                    }
+                )
+
+                if best_rank is None or rank < best_rank:
+                    best_rank = rank
+                    best_choice = (record, host_part, domain_port)
+
+            if best_choice is not None:
+                selected_record, selected_host, selected_port = best_choice
+                port_value = selected_port if selected_port is not None else configured_port
+
+                resolution_flags = []
+                if configured_port is not None:
+                    if selected_port == configured_port:
+                        resolution_flags.append(f"port_match:{configured_port}")
+                    else:
+                        resolution_flags.append("port_configured_fallback")
+                elif selected_port is None:
+                    resolution_flags.append("portless_match")
+                else:
+                    resolution_flags.append(f"port_from_domain:{selected_port}")
+
+                if selected_host == host_only:
+                    resolution_flags.append("request_host_match")
+                elif configured_hostname and selected_host.endswith(configured_hostname):
+                    resolution_flags.append("configured_hostname_suffix")
+
+                if getattr(selected_record, "is_primary", False):
+                    resolution_flags.append("primary_domain")
+
+                resolution_source = "tenant_domain"
+                if resolution_flags:
+                    resolution_source = f"{resolution_source}[{','.join(resolution_flags)}]"
+
+                sanitized_schema = sanitize_log_value(tenant_schema)
+                sanitized_request_host = sanitize_log_value(request_host)
+                sanitized_configured = sanitize_log_value(configured_url)
+                sanitized_selected = sanitize_log_value(selected_record.domain)
+
+                frontend_resolver_logger.info(
+                    "Resolved tenant frontend base URL",
+                    extra={
+                        "tenant_schema": sanitized_schema,
+                        "request_host": sanitized_request_host,
+                        "configured_url": sanitized_configured,
+                        "selected_domain": sanitized_selected,
+                        "selected_port": selected_port,
+                        "configured_port": configured_port,
+                        "resolution_source": resolution_source,
+                        "candidates": sanitize_log_value(candidate_rows),
+                    },
+                )
+
+                return build_url(selected_host, port_value), resolution_source
+
+        if configured_port is not None:
+            return build_url(host_only, configured_port), "request_host_with_configured_port"
+
+        return build_url(host_only), "request_host"
+
+    if configured_url:
+        hostname = configured_hostname or host_only
+        return build_url(hostname, configured_port), "configured"
+
+    return build_url(host_only), "request_host"
 
 
 class StripeWebhookView(APIView):
