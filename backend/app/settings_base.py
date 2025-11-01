@@ -437,6 +437,14 @@ LOGGING = {
             "backupCount": 5,
             "formatter": "verbose",
         },
+        "file_health": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / "health.log",
+            "maxBytes": 1024 * 1024 * 10,
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
     },
     "loggers": {
         "django": {
@@ -532,6 +540,11 @@ LOGGING = {
         "api.performance": {
             "handlers": ["file_performance", "console"],
             "level": "WARNING",
+            "propagate": False,
+        },
+        "api.health": {
+            "handlers": ["file_health"],
+            "level": "INFO",
             "propagate": False,
         },
         "monitors": {

@@ -54,6 +54,7 @@ backend/celerybeat-schedule.dat
 # Audit reports (optional - uncomment to keep local only)
 .github/docs/Audits/
 .github/logs/
+logs/
 diagnostic_output.txt
 enhanced_logging_config.py
 
@@ -63,6 +64,9 @@ scripts/
 *.bak
 *.swp
 *~
+
+# Backend temp helpers
+backend/tmp/
 
 # Celery
 backend/celerybeat-schedule*

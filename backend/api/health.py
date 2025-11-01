@@ -1,6 +1,4 @@
-"""
-Health check and metrics endpoints for monitoring and observability.
-"""
+"""Health check and metrics endpoints for monitoring and observability."""
 
 import logging
 from datetime import timedelta
@@ -13,7 +11,9 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-logger = logging.getLogger(__name__)
+from api.logging_utils import sanitize_log_value
+
+logger = logging.getLogger("api.health")
 
 
 @api_view(["GET"])
@@ -24,6 +24,14 @@ def health_check(request):
 
     Returns 200 OK if the application is healthy, 503 Service Unavailable otherwise.
     """
+    logger.info(
+        "Health check invoked",
+        extra={
+            "remote_addr": request.META.get("REMOTE_ADDR", "unknown"),
+            "path": request.path,
+        },
+    )
+
     checks = {
         "status": "healthy",
         "timestamp": timezone.now().isoformat(),
@@ -54,6 +62,14 @@ def health_check(request):
         status.HTTP_200_OK if checks["status"] == "healthy" else status.HTTP_503_SERVICE_UNAVAILABLE
     )
 
+    logger.info(
+        "Health check completed",
+        extra={
+            "status_code": http_status,
+            "result": sanitize_log_value(checks),
+        },
+    )
+
     return Response(checks, status=http_status)
 
 
@@ -66,6 +82,14 @@ def readiness_check(request):
     Returns 200 if the app is ready to serve traffic, 503 otherwise.
     More thorough than health_check - includes migrations, Celery workers, etc.
     """
+    logger.info(
+        "Readiness check invoked",
+        extra={
+            "remote_addr": request.META.get("REMOTE_ADDR", "unknown"),
+            "path": request.path,
+        },
+    )
+
     checks = {
         "status": "ready",
         "timestamp": timezone.now().isoformat(),
@@ -128,6 +152,14 @@ def readiness_check(request):
         status.HTTP_200_OK if checks["status"] == "ready" else status.HTTP_503_SERVICE_UNAVAILABLE
     )
 
+    logger.info(
+        "Readiness check completed",
+        extra={
+            "status_code": http_status,
+            "result": sanitize_log_value(checks),
+        },
+    )
+
     return Response(checks, status=http_status)
 
 
@@ -140,6 +172,14 @@ def metrics(request):
     Provides statistics about the application state.
     """
     from monitors.models import Endpoint
+
+    logger.info(
+        "Metrics snapshot requested",
+        extra={
+            "remote_addr": request.META.get("REMOTE_ADDR", "unknown"),
+            "path": request.path,
+        },
+    )
 
     metrics_data = {
         "timestamp": timezone.now().isoformat(),
@@ -240,5 +280,10 @@ def metrics(request):
     except Exception as e:
         logger.warning(f"Failed to fetch activity metrics: {e}")
         metrics_data["activity"] = {"error": str(e)}
+
+    logger.info(
+        "Metrics snapshot completed",
+        extra={"result": sanitize_log_value(metrics_data)},
+    )
 
     return Response(metrics_data)

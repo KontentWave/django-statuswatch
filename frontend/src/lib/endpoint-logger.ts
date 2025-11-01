@@ -6,7 +6,7 @@
  */
 
 import type { AxiosError } from "axios";
-import { createLogger, type Logger } from "./logger";
+import { createLogger, type Logger, type LogEntry } from "./logger";
 
 type EndpointAction = "list" | "create" | "delete";
 type EndpointPhase = "start" | "success" | "error";
@@ -32,10 +32,15 @@ let logger: Logger = createLogger("endpoint-client");
  * Note: Browser logger doesn't support file paths, this is a no-op for compatibility
  */
 export function configureEndpointLogger(
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   options: string | { filePath: string }
 ): void {
-  // Browser logger doesn't support file configuration, but keep API for compatibility
+  const filePath = typeof options === "string" ? options : options.filePath;
+
+  if (filePath && canUseFileLogger()) {
+    logger = createFileLogger("endpoint-client", filePath);
+    return;
+  }
+
   logger = createLogger("endpoint-client");
 }
 
@@ -88,4 +93,66 @@ function isAxiosError(error: unknown): error is AxiosError {
     "isAxiosError" in error &&
     Boolean((error as AxiosError).isAxiosError)
   );
+}
+
+function canUseFileLogger(): boolean {
+  if (typeof process === "undefined") {
+    return false;
+  }
+
+  const isNode = Boolean(process.versions?.node);
+  if (!isNode) {
+    return false;
+  }
+
+  const hasTestFlag =
+    process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+
+  return hasTestFlag || typeof window === "undefined";
+}
+
+function createFileLogger(name: string, filePath: string): Logger {
+  let fsPromise: Promise<typeof import("node:fs/promises")> | null = null;
+  let pathPromise: Promise<typeof import("node:path")> | null = null;
+
+  async function resolveFs() {
+    if (!fsPromise) {
+      fsPromise = import("node:fs/promises");
+    }
+    return fsPromise;
+  }
+
+  async function resolvePath() {
+    if (!pathPromise) {
+      pathPromise = import("node:path");
+    }
+    return pathPromise;
+  }
+
+  return {
+    async log(event: string, data?: unknown): Promise<void> {
+      const [{ appendFile, mkdir }, { dirname }] = await Promise.all([
+        resolveFs(),
+        resolvePath(),
+      ]);
+
+      await mkdir(dirname(filePath), { recursive: true });
+
+      const base: LogEntry = {
+        timestamp: new Date().toISOString(),
+        event: `[${name}] ${event}`,
+        logger: name,
+        pid: typeof process !== "undefined" ? process.pid : undefined,
+        environment:
+          typeof process !== "undefined" ? process.env.NODE_ENV : undefined,
+      };
+      const payload =
+        data && typeof data === "object"
+          ? (data as Record<string, unknown>)
+          : { value: data };
+
+      const entry = { ...base, ...payload };
+      await appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    },
+  };
 }
