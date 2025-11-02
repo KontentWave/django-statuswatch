@@ -1361,38 +1361,7 @@ raise DuplicateOrganizationNameError(
 
 **Benefit:** Reduces friction in registration flow.
 
-#### 4. Email Domain Verification
-
-**Feature:** Only users with verified email domain can register with matching organization name.
-
-**Example:** Only users with `@acme.com` email can register organization named "Acme Corporation".
-
-**Implementation:**
-
-```python
-def verify_organization_domain(org_name: str, email: str) -> bool:
-    """Verify user's email domain matches organization name."""
-    # Extract domain from email
-    email_domain = email.split('@')[1]
-
-    # Extract potential domain from org name
-    org_slug = slugify(org_name)
-
-    # Check if domain matches or is similar
-    return org_slug in email_domain or email_domain in org_slug
-
-# In serializer validation
-if Client.objects.filter(name=org_name).exists():
-    if verify_organization_domain(org_name, email):
-        # Allow registration with verification
-        pass
-    else:
-        raise DuplicateOrganizationNameError(...)
-```
-
-**Benefit:** Prevents organization name squatting, increases trust.
-
-#### 5. Multi-Tenant Search Optimization
+#### 4. Multi-Tenant Search Optimization
 
 **Feature:** Cache user-tenant relationships to avoid N queries on every login.
 

@@ -16,7 +16,7 @@ Free-plan tenants can now upgrade to the Pro subscription using Stripe Checkout.
 
 ## Backend Implementation
 
-- **Stripe Session Endpoint:** `BillingCheckoutSessionView` in `backend/payments/views.py` enforces Stripe key configuration, maps plans to `STRIPE_PRO_PRICE_ID`, and calls `stripe.checkout.Session.create` in subscription mode with tenant schema metadata and the user’s email.
+- **Stripe Session Endpoint:** `BillingCheckoutSessionView` in `backend/payments/views.py` enforces Stripe key configuration, maps plans to `STRIPE_PRO_PRICE_ID`, and calls `stripe.checkout.Session.create` in subscription mode with tenant schema metadata.
 - **Routing:** `payments/billing_urls.py` exposes `create-checkout-session/`; both `backend/app/urls_tenant.py` and `backend/app/urls_public.py` include it under `/api/billing/` to keep tenant and public schemas aligned.
 - **Settings:** `backend/app/settings.py` now reads `FRONTEND_URL` (default `http://localhost:5173`) to build success and cancel return URLs. Local `.env` pins `FRONTEND_URL=https://localhost:5173` to match the HTTPS Vite dev server.
 - **Logging:** The view writes structured entries to the `payments.billing` and `payments.checkout` logger namespaces, which feed dedicated log files (`backend/logs/billing.log`, `backend/logs/payments.log`). Errors sanitise messages to avoid leaking Stripe payloads.

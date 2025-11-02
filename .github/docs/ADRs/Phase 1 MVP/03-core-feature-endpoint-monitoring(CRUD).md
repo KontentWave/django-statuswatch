@@ -51,7 +51,6 @@ Authenticated tenants manage their monitored URLs through `/api/endpoints/` and 
 - ✅ JWT token rotation and blacklisting
 - ✅ Rate limiting on authentication endpoints
 - ✅ Error message sanitization to prevent information disclosure
-- ✅ Email verification system with token expiration
 
 **Reliability Improvements:**
 
