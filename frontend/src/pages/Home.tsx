@@ -128,7 +128,14 @@ export default function Home() {
           </button>
         </div>
 
-        <div>
+        <div className="flex gap-3">
+          <Link
+            to="/login"
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+          >
+            Login to Dashboard
+          </Link>
+
           <Link
             to="/register"
             className="inline-flex items-center gap-2 rounded-xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-400"
