@@ -10,6 +10,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView
 urlpatterns = [
     path(settings.ADMIN_URL, admin.site.urls),
     # Health & Monitoring endpoints (no auth required)
+    path("healthz", health_check, name="healthz"),
     path("health/", health_check, name="health_check"),
     path("health/ready/", readiness_check, name="readiness_check"),
     path("metrics/", metrics, name="metrics"),

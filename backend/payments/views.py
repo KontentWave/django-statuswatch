@@ -11,7 +11,12 @@ from api.throttles import BillingRateThrottle
 from django.conf import settings
 from django.core.exceptions import DisallowedHost
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.decorators import (
+    api_view,
+    authentication_classes,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -31,13 +36,15 @@ webhook_signature_logger = logging.getLogger("payments.webhooks.signature")
 
 
 @api_view(["GET"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def stripe_config(request):
     return Response({"publicKey": settings.STRIPE_PUBLIC_KEY or ""})
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated])
+@authentication_classes([])
+@permission_classes([AllowAny])
 @throttle_classes([BillingRateThrottle])
 def create_checkout_session(request):
     """
@@ -45,6 +52,7 @@ def create_checkout_session(request):
 
     Sanitizes all Stripe errors to prevent API key leakage.
     Rate limited to prevent billing abuse.
+    Allows anonymous users to test checkout (demo purposes).
     """
     if not settings.STRIPE_SECRET_KEY:
         logger.error("STRIPE_SECRET_KEY not configured")
@@ -91,8 +99,9 @@ def create_checkout_session(request):
 
     except stripe_error.CardError as e:
         # Card was declined
+        user_id = request.user.id if request.user.is_authenticated else "anonymous"
         logger.warning(
-            sanitize_log_value(f"Stripe card error for user {request.user.id}: {e.user_message}"),
+            sanitize_log_value(f"Stripe card error for user {user_id}: {e.user_message}"),
             extra={"stripe_error_code": sanitize_log_value(e.code)},
         )
         raise InvalidPaymentMethodError(
@@ -101,8 +110,9 @@ def create_checkout_session(request):
 
     except stripe_error.InvalidRequestError as e:
         # Invalid parameters
+        user_id = request.user.id if request.user.is_authenticated else "anonymous"
         logger.error(
-            sanitize_log_value(f"Stripe invalid request for user {request.user.id}: {str(e)}"),
+            sanitize_log_value(f"Stripe invalid request for user {user_id}: {str(e)}"),
             exc_info=settings.DEBUG,
             extra={
                 "amount": amount,
@@ -131,8 +141,9 @@ def create_checkout_session(request):
 
     except stripe_error.StripeError as e:
         # Generic Stripe error
+        user_id = request.user.id if request.user.is_authenticated else "anonymous"
         logger.error(
-            sanitize_log_value(f"Stripe error for user {request.user.id}: {str(e)}"),
+            sanitize_log_value(f"Stripe error for user {user_id}: {str(e)}"),
             exc_info=settings.DEBUG,
         )
         raise PaymentProcessingError() from e

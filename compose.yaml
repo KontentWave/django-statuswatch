@@ -19,3 +19,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  web:
+    image: ghcr.io/kontentwave/statuswatch-web:edge
+    ports: ["8003:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    pull_policy: always
+
+    # Keep your local defaults in backend/.env (localhost etc.)
+    # and override container-specific values here:
+    env_file: backend/.env
+    environment:
+      DJANGO_ENV: development
+      DATABASE_URL: postgresql://postgres:devpass@db:5432/dj01
+      # >>> IMPORTANT: use the redis *service name* in Compose
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # optional: write logs to file (see logging section)
+      LOG_TO_FILE: "1"
+
+    volumes:
+      - ./logs:/app/logs
+
+    # Healthcheck: use GET /health/ (present in image)
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:8000/health/ >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5

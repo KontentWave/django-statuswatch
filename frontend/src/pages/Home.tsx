@@ -10,29 +10,29 @@ import { initiateTenantSessionTransfer } from "@/lib/tenant-session";
 export default function Home() {
   const loginDemo = async () => {
     logAuthEvent("LOGIN_ATTEMPT", {
-      username: "jwt",
+      username: "jwt@example.com",
       source: "homepage_demo_button",
     });
 
     try {
       // Use new multi-tenant login endpoint
       const { data } = await api.post("/auth/login/", {
-        username: "jwt",
-        password: "JwtP@ss123456",
+        username: "jwt@example.com",
+        password: "TestPass123!",
       });
 
       storeAuthTokens({ access: data.access, refresh: data.refresh });
       logAuthEvent("TOKEN_STORED", {
-        username: "jwt",
+        username: "jwt@example.com",
         hasAccess: !!data.access,
         hasRefresh: !!data.refresh,
         tenant_schema: data.tenant_schema,
         tenant_name: data.tenant_name,
       });
 
-      toast.success(`Logged in as jwt (${data.tenant_name})`);
+      toast.success(`Logged in as jwt@example.com (${data.tenant_name})`);
       logAuthEvent("LOGIN_SUCCESS", {
-        username: "jwt",
+        username: "jwt@example.com",
         tenant: data.tenant_name,
       });
 
@@ -45,7 +45,7 @@ export default function Home() {
           tenantDomain: data.tenant_domain,
           tenantName: data.tenant_name,
           tenantSchema: data.tenant_schema,
-          username: "jwt",
+          username: "jwt@example.com",
           source: "homepage_demo",
         })
       ) {
@@ -68,7 +68,7 @@ export default function Home() {
           : undefined;
 
       logAuthEvent("LOGIN_FAILED", {
-        username: "jwt",
+        username: "jwt@example.com",
         error: errorMsg ?? "Unknown error",
         source: "homepage_demo_button",
       });
@@ -110,7 +110,7 @@ export default function Home() {
             className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700"
             title="uses /api/auth/token/"
           >
-            Login (jwt/JwtP@ss123456)
+            Login (jwt@example.com/TestPass123!)
           </button>
 
           <button

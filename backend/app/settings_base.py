@@ -5,6 +5,7 @@ This module contains environment-agnostic settings shared across all environment
 Environment-specific overrides are in settings_development.py and settings_production.py.
 """
 
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -178,16 +179,23 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # -------------------------------------------------------------------
-# Celery Configuration
+# Celery/Redis Configuration
 # -------------------------------------------------------------------
-CELERY_BROKER_URL = env("REDIS_URL", default="redis://127.0.0.1:6379/0")
-CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+# Prefer explicit CELERY_* vars; otherwise fall back to REDIS_URL; finally to sane defaults.
+REDIS_URL_DEFAULT = "redis://127.0.0.1:6379/0"
+
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL") or os.getenv("REDIS_URL", REDIS_URL_DEFAULT)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND") or os.getenv(
+    "REDIS_RESULT_URL", "redis://127.0.0.1:6379/1"
+)
+
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ALWAYS_EAGER = False
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
+
 CELERY_BEAT_SCHEDULE = {
     "monitors.schedule_endpoint_checks": {
         "task": "monitors.tasks.schedule_endpoint_checks",
