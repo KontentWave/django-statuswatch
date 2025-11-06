@@ -65,7 +65,7 @@ jobs:
         timeout-minutes: 25
         run: |
           set +e
-          python -m pytest -q
+          python -m pytest -v --tb=short
           ec=$?
           set -e
           if [ "$ec" -eq 5 ]; then
