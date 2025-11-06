@@ -61,19 +61,41 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements-dev.txt
 
-      - name: Run tests (allow empty)
-        timeout-minutes: 25
+      - name: Run tests in batches to avoid resource exhaustion
+        timeout-minutes: 30
         run: |
-          set +e
-          python -m pytest -v --tb=short
-          ec=$?
           set -e
-          if [ "$ec" -eq 5 ]; then
-            echo "No tests collected; skipping."
-            exit 0
-          else
-            exit "$ec"
-          fi
+          echo "Running tests in batches to prevent PostgreSQL connection exhaustion..."
+
+          # Batch 1: Fast unit tests
+          echo "Batch 1: Unit tests (admin, auth, utils, settings)"
+          python -m pytest tests/test_admin_url.py tests/test_auth_service.py tests/test_ci_smoke.py tests/test_db_user.py tests/test_django_checks.py tests/test_imports.py tests/test_settings.py -v --tb=short
+
+          # Batch 2: Billing tests (with skipped throttle tests)
+          echo "Batch 2: Billing tests"
+          python -m pytest tests/test_billing_*.py -v --tb=short
+
+          # Batch 3: JWT and token tests
+          echo "Batch 3: JWT and authentication"
+          python -m pytest tests/test_jwt_rotation.py tests/test_token_refresh.py tests/test_login.py tests/test_current_user.py tests/test_multi_tenant_auth.py -v --tb=short
+
+          # Batch 4: Security and validation
+          echo "Batch 4: Security tests"
+          python -m pytest tests/test_password_complexity.py tests/test_security_headers.py tests/test_https_enforcement.py tests/test_rate_limiting.py -v --tb=short
+
+          # Batch 5: Email and registration
+          echo "Batch 5: Email and registration"
+          python -m pytest tests/test_email_verification.py tests/test_registration.py tests/test_duplicate_org_name_pytest.py -v --tb=short
+
+          # Batch 6: API endpoints and health
+          echo "Batch 6: API and health checks"
+          python -m pytest tests/test_endpoints_api.py tests/test_health.py tests/test_exception_handling.py -v --tb=short
+
+          # Batch 7: Scheduler and tasks
+          echo "Batch 7: Background tasks"
+          python -m pytest tests/test_scheduler.py tests/test_ping_tasks.py -v --tb=short
+
+          echo "All test batches completed successfully!"
 
       - name: Check Celery tasks registration
         run: |

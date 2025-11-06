@@ -10,8 +10,25 @@ import re
 import uuid
 
 import pytest
-from django.db import connection
-from tenants.models import Client, Domain
+
+
+def pytest_configure(config):
+    """Configure test environment before tests run."""
+    from django.conf import settings
+
+    # Fix database connection pooling for tests
+    # CONN_MAX_AGE causes connection pool exhaustion in test suites
+    # Set to 0 to close connections immediately after each test
+    if hasattr(settings, "DATABASES"):
+        for db_config in settings.DATABASES.values():
+            db_config["CONN_MAX_AGE"] = 0
+            db_config["CONN_HEALTH_CHECKS"] = False
+
+
+# Delay Django imports until after pytest setup
+from django.db import connection  # noqa: E402
+from django_tenants.utils import schema_context  # noqa: E402
+from tenants.models import Client, Domain  # noqa: E402
 
 # Store the original BOUND method from connection.ops (not the class method)
 # This ensures we have access to 'self' when calling the original method
@@ -154,7 +171,6 @@ def ensure_test_tenant(db):
     or TenantClient to switch to tenant schemas when needed.
     """
     from django.core.management import call_command
-    from django_tenants.utils import schema_context
 
     # Ensure we're in public schema to create tenants
     connection.set_schema_to_public()
@@ -244,6 +260,29 @@ def reset_schema_between_tests(db, ensure_test_tenant):
     yield
     # Return to public schema for next test
     connection.set_schema_to_public()
+
+
+@pytest.fixture(autouse=True, scope="function")
+def cleanup_jwt_tokens(db):
+    """
+    Clean up JWT token blacklist tables after each test to prevent table bloat.
+
+    After ~70 tests with JWT operations, token_blacklist tables can have hundreds
+    of rows causing PostgreSQL table locks and test hangs. This fixture truncates
+    the tables after each test to prevent resource exhaustion.
+    """
+    yield
+    # Clean up after test
+    try:
+        with schema_context("test_tenant"):
+            with connection.cursor() as cursor:
+                cursor.execute("TRUNCATE TABLE token_blacklist_blacklistedtoken CASCADE")
+                cursor.execute("TRUNCATE TABLE token_blacklist_outstandingtoken CASCADE")
+    except Exception:
+        # Ignore errors if tables don't exist yet
+        pass
+    finally:
+        connection.set_schema_to_public()
 
 
 @pytest.fixture
