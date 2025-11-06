@@ -3,6 +3,9 @@ name: Publish to GHCR
 on:
   push:
     branches: [ main ]          # dev channel -> edge + timestamp + sha
+    paths:
+      - 'backend/**'
+      - '.github/workflows/publish.yml'
   release:
     types: [ published ]        # stable channel -> latest + semver tags
 
