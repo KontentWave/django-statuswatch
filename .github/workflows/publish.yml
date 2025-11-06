@@ -1,0 +1,83 @@
+name: Publish to GHCR
+
+on:
+  push:
+    branches: [ main ]          # dev channel -> edge + timestamp + sha
+  release:
+    types: [ published ]        # stable channel -> latest + semver tags
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # GHCR requires lowercase path segments
+  OWNER_LC: ${{ github.repository_owner }}
+  IMAGE_NAME: statuswatch-web
+  IMAGE_PLATFORMS: linux/amd64     # add linux/arm64 later if you want
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalize owner to lowercase
+        run: |
+          echo "OWNER_LC=${OWNER_LC,,}" >> "$GITHUB_ENV"
+
+      - name: Timestamp (UTC)
+        id: ts
+        run: echo "ts=$(date -u +%Y%m%d-%H%M)" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU (if you add arm64 later)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ env.OWNER_LC }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Optional but very nice: auto labels + tags derived from semver/refs
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.OWNER_LC }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=edge,enable=${{ github.event_name == 'push' }}
+            type=raw,value=dev-${{ steps.ts.outputs.ts }},enable=${{ github.event_name == 'push' }}
+            type=raw,value=sha-${{ github.sha }}
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}},enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.ts.outputs.ts }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          platforms: ${{ env.IMAGE_PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Optional extras:
+          # provenance: true
+          # sbom: true
