@@ -1,5 +1,9 @@
+import json
 import logging
+from datetime import datetime
+from pathlib import Path
 
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -17,6 +21,24 @@ from .serializers import RegistrationSerializer, UserSerializer
 from .throttles import BurstRateThrottle, LoginRateThrottle, RegistrationRateThrottle
 
 auth_logger = logging.getLogger("api.auth")
+User = get_user_model()
+
+
+def _write_debug_log(log_type: str, data: dict) -> None:
+    """Write detailed debug logs to file for EC2 troubleshooting."""
+    try:
+        log_dir = Path("/app/logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        log_file = log_dir / "auth_debug.log"
+
+        entry = {"timestamp": datetime.utcnow().isoformat(), "type": log_type, "data": data}
+
+        with open(log_file, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        # Don't let logging failures break authentication
+        auth_logger.error(f"Failed to write debug log: {e}")
 
 
 class PingView(APIView):
@@ -119,12 +141,54 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         username = request.data.get("username") or request.data.get("email")
+        password = request.data.get("password", "")
         ip_address = self._extract_ip(request)
         tenant = getattr(request, "tenant", None)
         schema_name = getattr(tenant, "schema_name", "public")
         user_agent = request.META.get("HTTP_USER_AGENT", "")
         host = request.get_host()
         origin = request.META.get("HTTP_ORIGIN", "")
+
+        # DETAILED DEBUG LOGGING FOR EC2 TROUBLESHOOTING
+        debug_data = {
+            "email": username,
+            "password_length": len(password) if password else 0,
+            "password_has_value": bool(password),
+            "schema_name": schema_name,
+            "host": host,
+            "origin": origin,
+            "ip_address": ip_address,
+            "user_agent": user_agent[:100] if user_agent else "",
+            "is_public_schema": schema_name == "public",
+            "tenant_id": getattr(tenant, "id", None),
+            "tenant_name": getattr(tenant, "name", None),
+        }
+
+        # Check if user exists in this schema
+        try:
+            from django_tenants.utils import schema_context
+
+            with schema_context(schema_name):
+                try:
+                    user = User.objects.get(email=username)
+                    debug_data["user_exists"] = True
+                    debug_data["user_id"] = user.id
+                    debug_data["user_is_active"] = user.is_active
+                    debug_data["user_has_usable_password"] = user.has_usable_password()
+                    debug_data["password_hash_prefix"] = (
+                        user.password[:20] if user.password else None
+                    )
+
+                    # TEST PASSWORD VERIFICATION
+                    password_check = user.check_password(password)
+                    debug_data["password_check_result"] = password_check
+                except User.DoesNotExist:
+                    debug_data["user_exists"] = False
+                    debug_data["error"] = f"User {username} not found in schema {schema_name}"
+        except Exception as e:
+            debug_data["user_lookup_error"] = str(e)
+
+        _write_debug_log("login_attempt", debug_data)
 
         # Enhanced logging: track tenant routing
         auth_logger.info(
@@ -144,6 +208,21 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
             serializer.is_valid(raise_exception=True)
         except TokenError as exc:
             reason = exc.args[0] if exc.args else "Invalid credentials"
+
+            # Enhanced debug logging for failures
+            _write_debug_log(
+                "login_failed",
+                {
+                    "email": username,
+                    "schema_name": schema_name,
+                    "host": host,
+                    "ip_address": ip_address,
+                    "reason": reason,
+                    "exception_type": type(exc).__name__,
+                    "exception_message": str(exc),
+                },
+            )
+
             auth_logger.warning(
                 "Login failed",
                 extra={
@@ -168,6 +247,19 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
             raise InvalidToken(reason) from exc
 
         user = getattr(serializer, "user", None)
+
+        # Log successful authentication
+        _write_debug_log(
+            "login_success",
+            {
+                "email": username or getattr(user, "email", None),
+                "user_id": getattr(user, "id", None),
+                "schema_name": schema_name,
+                "host": host,
+                "ip_address": ip_address,
+            },
+        )
+
         auth_logger.info(
             "Login successful",
             extra={

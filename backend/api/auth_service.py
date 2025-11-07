@@ -220,8 +220,9 @@ class MultiTenantAuthService:
         user_info = MultiTenantAuthService.find_user_in_tenants(username, tenant_schema)
 
         if not user_info:
-            logger.warning(
-                f"[MULTI-TENANT-AUTH] Authentication failed: User '{username}' not found"
+            logger.error(
+                f"[MULTI-TENANT-AUTH] Authentication failed: User '{username}' not found "
+                f"(tenant_schema filter: {tenant_schema or 'none - searched all tenants'})"
             )
             raise MultiTenantAuthenticationError(
                 "No active account found with the given credentials"
@@ -231,7 +232,8 @@ class MultiTenantAuthService:
         tenant_name = user_info["tenant_name"]
 
         logger.info(
-            f"[MULTI-TENANT-AUTH] User found in tenant '{tenant_name}' (schema: {schema_name})"
+            f"[MULTI-TENANT-AUTH] User found in tenant '{tenant_name}' (schema: {schema_name}), "
+            f"proceeding with password verification"
         )
 
         # Step 2: Switch to tenant schema and authenticate
@@ -252,13 +254,33 @@ class MultiTenantAuthService:
 
             if user is None:
                 # Try with email as username
+                logger.debug(
+                    f"[MULTI-TENANT-AUTH] First authentication attempt failed with username, "
+                    f"trying with email: {user_info['email']}"
+                )
                 user = authenticate(username=user_info["email"], password=password)
 
             if user is None:
-                logger.warning(
+                logger.error(
                     f"[MULTI-TENANT-AUTH] Authentication failed: Invalid password for "
-                    f"user '{username}' in tenant '{tenant_name}'"
+                    f"user '{username}' in tenant '{tenant_name}' (schema: {schema_name}). "
+                    f"Both username and email authentication attempts failed."
                 )
+
+                # Additional diagnostic: check if user still exists and is active
+                from django.contrib.auth import get_user_model
+
+                User = get_user_model()
+                try:
+                    check_user = User.objects.get(email=user_info["email"])
+                    logger.error(
+                        f"[MULTI-TENANT-AUTH] User exists in DB: is_active={check_user.is_active}, "
+                        f"has_usable_password={check_user.has_usable_password()}, "
+                        f"password_hash_start={check_user.password[:30]}"
+                    )
+                except User.DoesNotExist:
+                    logger.error("[MULTI-TENANT-AUTH] User no longer exists in schema!")
+
                 raise MultiTenantAuthenticationError("Invalid credentials")
 
             if not user.is_active:
