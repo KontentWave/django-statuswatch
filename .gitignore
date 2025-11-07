@@ -53,7 +53,7 @@ backend/celerybeat-schedule.dat
 # ---- documentation / diagnostics ----
 # Audit reports (optional - uncomment to keep local only)
 .github/docs/Audits/
-#.github/logs/
+!.github/logs/
 logs/
 diagnostic_output.txt
 enhanced_logging_config.py
