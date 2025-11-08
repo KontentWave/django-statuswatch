@@ -24,7 +24,10 @@ echo ""
 
 echo "2. CADDY CONTAINER STATUS"
 echo "----------------------------------------------------------------------"
-docker ps --filter "name=caddy" --format "Name: {{.Names}}\nStatus: {{.Status}}\nPorts: {{.Ports}}\nHealth: {{.Health}}"
+docker ps --filter "name=caddy" --format "Name: {{.Names}}\nStatus: {{.Status}}\nPorts: {{.Ports}}"
+echo ""
+echo "Health status:"
+docker ps --filter "name=caddy" --format "Name: {{.Names}}\nStatus: {{.Status}}\nPorts: {{.Ports}}"
 echo ""
 
 echo "3. CADDY CONFIGURATION"
