@@ -68,12 +68,12 @@ for H in "$PUBD" "$ACMD"; do
   echo "-- External via Caddy: https://$H"
   curl -k -sS -X POST "https://$H/api/auth/token/" \
     -H "Content-Type: application/json" \
-    --data '{"email":"jwt@example.com","password":"TestPass123!"}' -i | head -n 20 || true
+    --data '{"username":"jwt@example.com","password":"TestPass123!"}' -i | head -n 20 || true
   echo "-- Internal to gunicorn with Host: $H"
   docker compose exec -T "$WEB" sh -lc "
     curl -sS -X POST http://127.0.0.1:8000/api/auth/token/ \
       -H 'Content-Type: application/json' -H 'Host: $H' \
-      --data '{\"email\":\"jwt@example.com\",\"password\":\"TestPass123!\"}' -i | head -n 20" || true
+      --data '{\"username\":\"jwt@example.com\",\"password\":\"TestPass123!\"}' -i | head -n 20" || true
 done
 
 section "6. Recent logs (web)"

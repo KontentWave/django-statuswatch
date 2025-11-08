@@ -45,7 +45,7 @@ echo ""
 bold "1) External test (via Caddy/HTTPS)"
 curl -k -sS -X POST "https://${HOST}/api/auth/token/" \
   -H "Content-Type: application/json" \
-  --data "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" \
+  --data "{\"username\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}" \
   -D /tmp/auth_headers.out \
   -o /tmp/auth_body.out || true
 echo "Status line: $(head -n1 /tmp/auth_headers.out)"
@@ -58,7 +58,7 @@ docker compose exec -T "$WEB" sh -lc "
 curl -sS -X POST http://127.0.0.1:8000/api/auth/token/ \
   -H 'Content-Type: application/json' \
   -H 'Host: ${HOST}' \
-  --data '{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}' -i" || true
+  --data '{\"username\":\"${EMAIL}\",\"password\":\"${PASSWORD}\"}' -i" || true
 echo ""
 
 bold "3) ORM check of user in schemas"
