@@ -6,8 +6,6 @@ __pycache__/
 *.pyd
 *.sqlite3
 *.db
-*.log
-*.log.*
 .env
 .env.*
 !.env.example
@@ -46,17 +44,22 @@ Thumbs.db
 # keep VS Code workspace files committed
 !.vscode/
 
-# ---- backend logs ----
-backend/logs/
+# ---- backend specific ----
 backend/celerybeat-schedule.dat
 
 # ---- documentation / diagnostics ----
 # Audit reports (optional - uncomment to keep local only)
 .github/docs/Audits/
-!.github/logs/
+
+# Ignore logs everywhere EXCEPT .github/logs/
 logs/
-diagnostic_output.txt
-enhanced_logging_config.py
+backend/logs/
+frontend/logs/
+*.log
+*.log.*
+# But keep diagnostic scripts in .github/logs/
+!.github/logs/
+!.github/logs/**
 
 # Temporary/backup files
 scripts/
