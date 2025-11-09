@@ -38,6 +38,9 @@ DOMAIN_MODEL = "tenants.Domain"
 TENANT_DOMAIN_MODEL = "tenants.Domain"
 PUBLIC_SCHEMA_NAME = "public"
 
+# Allow internal requests (e.g., from Caddy with Host: web:8000) to use public schema
+SHOW_PUBLIC_IF_NO_TENANT_FOUND = True
+
 SHARED_APPS: tuple[str, ...] = (
     "django_tenants",  # MUST be first!
     "django.contrib.contenttypes",
