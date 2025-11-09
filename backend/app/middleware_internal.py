@@ -26,8 +26,11 @@ class InternalEndpointMiddleware:
     # Paths that should allow HTTP access
     HTTP_ALLOWED_PATHS = [
         "/api/internal/validate-domain/",
+        "/health/",
         "/health/live/",
+        "/health/ready/",
         "/healthz",
+        "/metrics/",
     ]
 
     def __init__(self, get_response):
