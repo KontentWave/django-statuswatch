@@ -300,11 +300,25 @@ class CeleryConfigurationTest(TestCase):
 class MiddlewareOrderTest(TestCase):
     """Test middleware order is correct."""
 
-    def test_security_middleware_first(self):
-        """SecurityMiddleware should be first."""
+    def test_internal_endpoint_middleware_first(self):
+        """InternalEndpointMiddleware should be first to exempt internal endpoints from HTTPS redirect."""
         from django.conf import settings
 
-        self.assertEqual(settings.MIDDLEWARE[0], "django.middleware.security.SecurityMiddleware")
+        self.assertEqual(
+            settings.MIDDLEWARE[0],
+            "app.middleware_internal.InternalEndpointMiddleware",
+            "InternalEndpointMiddleware must be first to mark internal endpoints before security checks",
+        )
+
+    def test_custom_security_middleware_second(self):
+        """CustomSecurityMiddleware should be second (after InternalEndpointMiddleware)."""
+        from django.conf import settings
+
+        self.assertEqual(
+            settings.MIDDLEWARE[1],
+            "app.middleware_security_custom.CustomSecurityMiddleware",
+            "CustomSecurityMiddleware must be second to respect internal endpoint exemptions",
+        )
 
     def test_tenant_middleware_after_whitenoise(self):
         """TenantMainMiddleware should come after WhiteNoise."""
