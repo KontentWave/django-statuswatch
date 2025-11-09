@@ -276,11 +276,14 @@ class TestSecurityHeadersIntegration:
 
         middleware = settings.MIDDLEWARE
 
-        # Django's SecurityMiddleware should be first
-        assert middleware[0] == "django.middleware.security.SecurityMiddleware"
+        # InternalEndpointMiddleware should be first (for on-demand TLS)
+        assert middleware[0] == "app.middleware_internal.InternalEndpointMiddleware"
 
-        # Our custom SecurityHeadersMiddleware should be right after
-        assert middleware[1] == "app.middleware.SecurityHeadersMiddleware"
+        # CustomSecurityMiddleware should be second (replaces Django's SecurityMiddleware)
+        assert middleware[1] == "app.middleware_security_custom.CustomSecurityMiddleware"
+
+        # Our custom SecurityHeadersMiddleware should be third
+        assert middleware[2] == "app.middleware.SecurityHeadersMiddleware"
 
 
 @pytest.mark.django_db

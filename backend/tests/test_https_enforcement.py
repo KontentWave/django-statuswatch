@@ -143,15 +143,14 @@ class HTTPSEnforcementTests(TestCase):
 
         middleware = settings.MIDDLEWARE
 
-        # SecurityMiddleware should be present
+        # CustomSecurityMiddleware should be present (replaces Django's SecurityMiddleware)
         self.assertIn(
-            "django.middleware.security.SecurityMiddleware",
+            "app.middleware_security_custom.CustomSecurityMiddleware",
             middleware,
         )
 
-        # It should be early in the middleware stack
-        # (within the first 3 entries is reasonable)
-        security_index = middleware.index("django.middleware.security.SecurityMiddleware")
+        # It should be early in the middleware stack (second position)
+        security_index = middleware.index("app.middleware_security_custom.CustomSecurityMiddleware")
         self.assertLess(
             security_index,
             3,
