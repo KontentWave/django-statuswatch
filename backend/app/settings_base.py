@@ -72,7 +72,8 @@ ROOT_URLCONF = "app.urls_tenant"
 # Middleware
 # -------------------------------------------------------------------
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
+    "app.middleware_internal.InternalEndpointMiddleware",  # Must be FIRST - exempts internal endpoints from HTTPS redirect
+    "app.middleware_security_custom.CustomSecurityMiddleware",  # Replaces django.middleware.security.SecurityMiddleware
     "app.middleware.SecurityHeadersMiddleware",  # Additional security headers
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django_tenants.middleware.main.TenantMainMiddleware",
