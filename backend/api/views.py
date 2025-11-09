@@ -466,3 +466,61 @@ class LogoutView(APIView):
             {"detail": "Logout successful. You have been logged out."},
             status=status.HTTP_205_RESET_CONTENT,
         )
+
+
+@api_view(["GET"])
+def validate_domain_for_tls(request):
+    """
+    Endpoint for Caddy on-demand TLS validation.
+    Returns 200 if domain exists in tenant domains, 404 if not.
+
+    Called by Caddy when a new subdomain is accessed to determine
+    if an SSL certificate should be issued automatically.
+
+    Query params:
+        domain: The domain to validate (e.g., "newclient.statuswatch.kontentwave.digital")
+
+    Returns:
+        200 OK: Domain exists and certificate should be issued
+        404 Not Found: Domain does not exist
+        400 Bad Request: Missing domain parameter
+    """
+    from tenants.models import Domain
+
+    domain = request.GET.get("domain", "").strip().lower()
+
+    if not domain:
+        return Response(
+            {"error": "domain parameter required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Check if domain exists in tenant domains
+    exists = Domain.objects.filter(domain=domain).exists()
+
+    if exists:
+        auth_logger.info(
+            f"TLS validation SUCCESS for domain: {domain}",
+            extra={
+                "domain": domain,
+                "validation": "success",
+                "source": "caddy_on_demand_tls",
+            },
+        )
+        return Response(
+            {"domain": domain, "valid": True},
+            status=status.HTTP_200_OK,
+        )
+    else:
+        auth_logger.warning(
+            f"TLS validation REJECTED for domain: {domain}",
+            extra={
+                "domain": domain,
+                "validation": "rejected",
+                "source": "caddy_on_demand_tls",
+            },
+        )
+        return Response(
+            {"domain": domain, "valid": False},
+            status=status.HTTP_404_NOT_FOUND,
+        )

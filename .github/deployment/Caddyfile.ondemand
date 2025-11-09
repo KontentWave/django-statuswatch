@@ -1,0 +1,69 @@
+{
+    # Global options for on-demand TLS
+    on_demand_tls {
+        ask http://web:8000/api/internal/validate-domain
+        interval 2m
+        burst 5
+    }
+
+    # Use staging during initial testing to avoid rate limits
+    # Comment out this line when ready for production certificates
+    acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+*.statuswatch.kontentwave.digital, statuswatch.kontentwave.digital {
+    # Enable on-demand TLS for dynamic tenant subdomains
+    tls {
+        on_demand
+    }
+
+    encode gzip
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+
+    # Named matchers
+    @api    path /api/*
+    @admin  path /admin/*
+    @health path /health/*
+
+    # ---- Backends FIRST (no path strip) ----
+    handle @api {
+        reverse_proxy web:8000
+    }
+    handle @admin {
+        reverse_proxy web:8000
+    }
+    handle @health {
+        reverse_proxy web:8000
+    }
+
+    # ---- Django static files ----
+    @staticfiles path /static/*
+    handle @staticfiles {
+        reverse_proxy web:8000
+    }
+
+    # ---- Frontend SPA fallback ----
+    handle {
+        root * /srv/statuswatch-frontend/dist
+
+        @static path / /index.html /assets/* /vite.svg /favicon.ico /manifest.webmanifest /robots.txt
+        header @static {
+            Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.stripe.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+            Referrer-Policy "same-origin"
+            Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=(), magnetometer=(), accelerometer=(), gyroscope=()"
+            Strict-Transport-Security "max-age=3600; includeSubDomains"
+            X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
+        }
+
+        @assets path /assets/*
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+
+        try_files {path} /index.html
+        file_server
+    }
+}

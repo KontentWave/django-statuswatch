@@ -1,7 +1,7 @@
 from api.health import health_check, metrics, readiness_check
 from api.multi_tenant_auth import MultiTenantLoginView
 from api.token_refresh import MultiTenantTokenRefreshView
-from api.views import TokenObtainPairWithLoggingView
+from api.views import TokenObtainPairWithLoggingView, validate_domain_for_tls
 from django.conf import settings
 from django.contrib import admin
 from django.http import HttpResponse
@@ -19,6 +19,8 @@ urlpatterns = [
     path("health/", health_check, name="health_check"),
     path("health/ready/", readiness_check, name="readiness_check"),
     path("metrics/", metrics, name="metrics"),
+    # Internal: Caddy on-demand TLS domain validation
+    path("api/internal/validate-domain/", validate_domain_for_tls, name="validate_domain_tls"),
     # Multi-tenant centralized authentication (NEW - works across all tenants)
     path("api/auth/login/", MultiTenantLoginView.as_view(), name="multi_tenant_login"),
     # JWT Authentication endpoints (OLD - only works if user is in public schema)
