@@ -2,9 +2,9 @@ name: frontend-ci
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   web:
@@ -27,7 +27,7 @@ jobs:
 
       - name: Build
         env:
-          VITE_STRIPE_PUBLIC_KEY: pk_test_dummy
+          VITE_STRIPE_PUBLIC_KEY: ${{ secrets.VITE_STRIPE_PUBLIC_KEY || 'pk_test_dummy' }}
         run: npm run build
 
       - name: Test (if any)

@@ -286,7 +286,9 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@statuswatch.loca
 SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
 
 # Frontend URL for email links (verification, password reset, etc.)
-FRONTEND_URL = env("FRONTEND_URL", default="https://localhost:5173")
+# Default empty - will auto-detect from request.get_host() in production
+# Override in development: FRONTEND_URL=https://localhost:5173
+FRONTEND_URL = env("FRONTEND_URL", default="")
 
 # -------------------------------------------------------------------
 # Logging Configuration (shared base)

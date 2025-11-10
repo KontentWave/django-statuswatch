@@ -140,6 +140,12 @@ PERMISSIONS_POLICY: dict[str, list[str]] = {  # noqa: F405
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # -------------------------------------------------------------------
+# Frontend URL (Development - Explicit for localhost)
+# -------------------------------------------------------------------
+# Override to use localhost:5173 for local development
+FRONTEND_URL = env("FRONTEND_URL", default="https://localhost:5173")  # noqa: F405
+
+# -------------------------------------------------------------------
 # Logging Configuration (Development - Verbose)
 # -------------------------------------------------------------------
 # Override monitors.audit logger to DEBUG level for development
