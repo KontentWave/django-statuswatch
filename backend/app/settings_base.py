@@ -187,11 +187,11 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # -------------------------------------------------------------------
 # Prefer explicit CELERY_* vars; otherwise fall back to REDIS_URL; finally to sane defaults.
 REDIS_URL_DEFAULT = "redis://127.0.0.1:6379/0"
+REDIS_URL = os.getenv("REDIS_URL", REDIS_URL_DEFAULT)
 
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL") or os.getenv("REDIS_URL", REDIS_URL_DEFAULT)
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND") or os.getenv(
-    "REDIS_RESULT_URL", "redis://127.0.0.1:6379/1"
-)
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL") or REDIS_URL
+# For result backend, use /1 database by default (separate from broker which uses /0)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND") or REDIS_URL.replace("/0", "/1")
 
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
