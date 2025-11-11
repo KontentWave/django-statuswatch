@@ -86,19 +86,34 @@ class EndpointViewSet(viewsets.ModelViewSet):
             endpoint.save(update_fields=["last_enqueued_at", "updated_at"])
 
             # Schedule initial ping task (inside transaction)
+            # In development (eager mode), tasks may fail due to schema switching
             tenant_schema = getattr(tenant, "schema_name", "public")
             try:
                 ping_endpoint.delay(str(endpoint.id), tenant_schema)
             except Exception as e:
-                # If task scheduling fails, transaction will rollback
-                logger.error(
-                    "Failed to schedule endpoint ping",
-                    extra={
-                        "endpoint_id": str(endpoint.id),
-                        "error": str(e),
-                    },
-                )
-                raise  # Rollback transaction
+                # If task scheduling fails in development, log but don't rollback
+                # In production with real Celery worker, this will propagate and rollback
+                from django.conf import settings
+
+                if settings.CELERY_TASK_ALWAYS_EAGER:
+                    logger.warning(
+                        "Failed to schedule endpoint ping in eager mode (development)",
+                        extra={
+                            "endpoint_id": str(endpoint.id),
+                            "error": str(e),
+                            "note": "This is expected in development without Celery worker",
+                        },
+                    )
+                else:
+                    # Production: re-raise to rollback transaction
+                    logger.error(
+                        "Failed to schedule endpoint ping",
+                        extra={
+                            "endpoint_id": str(endpoint.id),
+                            "error": str(e),
+                        },
+                    )
+                    raise
 
     def perform_destroy(self, instance):
         audit_logger.info(

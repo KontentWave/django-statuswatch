@@ -143,6 +143,7 @@ EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 # Celery Configuration (Development - Synchronous Execution)
 # -------------------------------------------------------------------
 # Run Celery tasks synchronously without worker (for development without Celery worker)
+# WARNING: Some tasks may fail in eager mode due to schema switching limitations
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
