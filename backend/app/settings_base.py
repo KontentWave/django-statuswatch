@@ -48,6 +48,7 @@ SHARED_APPS: tuple[str, ...] = (
     "rest_framework",
     "corsheaders",  # CORS support
     "tenants",  # your tenants app (Client/Domain models)
+    "django_celery_beat",  # Celery Beat scheduler (shared across tenants)
     # NOTE: token_blacklist NOT in SHARED_APPS - we handle it per tenant
 )
 
