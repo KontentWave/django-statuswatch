@@ -140,6 +140,13 @@ PERMISSIONS_POLICY: dict[str, list[str]] = {  # noqa: F405
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # -------------------------------------------------------------------
+# Celery Configuration (Development - Synchronous Execution)
+# -------------------------------------------------------------------
+# Run Celery tasks synchronously without worker (for development without Celery worker)
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+
+# -------------------------------------------------------------------
 # Frontend URL (Development - Explicit for localhost)
 # -------------------------------------------------------------------
 # Override to use localhost:5173 for local development
