@@ -334,7 +334,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "statuswatch.log",
-            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
             "filters": ["max_warning"],
@@ -343,7 +343,7 @@ LOGGING = {
             "level": "ERROR",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "error.log",
-            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -351,7 +351,7 @@ LOGGING = {
             "level": "WARNING",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "security.log",
-            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -359,7 +359,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "request.log",
-            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -367,7 +367,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "audit.log",
-            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -375,7 +375,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "performance.log",
-            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -383,7 +383,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "payments.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -391,7 +391,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "billing.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -399,7 +399,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "webhooks.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -407,7 +407,7 @@ LOGGING = {
             "level": "DEBUG",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "webhooks_debug.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -415,7 +415,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "webhook_signatures.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -423,7 +423,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "subscriptions.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -431,7 +431,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "cancellations.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -439,7 +439,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "subscription_state.log",
-            "maxBytes": 1024 * 1024 * 10,
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },
@@ -447,7 +447,7 @@ LOGGING = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "filename": LOG_DIR / "authentication.log",
-            "maxBytes": 1024 * 1024 * 10,  # 10 MB
+            "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 5,
             "formatter": "verbose",
         },

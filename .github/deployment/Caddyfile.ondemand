@@ -6,7 +6,7 @@
 
     # Use staging during initial testing to avoid rate limits
     # Comment out this line when ready for production certificates
-    acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
 }
 
 *.statuswatch.kontentwave.digital, statuswatch.kontentwave.digital {
