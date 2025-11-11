@@ -55,3 +55,43 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  worker:
+    image: ghcr.io/kontentwave/statuswatch-web:edge
+    command: celery -A app worker -l info
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    pull_policy: always
+    env_file: backend/.env
+    environment:
+      DJANGO_ENV: development
+      DATABASE_URL: postgresql://postgres:devpass@db:5432/dj01
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      LOG_TO_FILE: "1"
+    volumes:
+      - ./logs:/app/logs
+
+  beat:
+    image: ghcr.io/kontentwave/statuswatch-web:edge
+    command: celery -A app beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    pull_policy: always
+    env_file: backend/.env
+    environment:
+      DJANGO_ENV: development
+      DATABASE_URL: postgresql://postgres:devpass@db:5432/dj01
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      LOG_TO_FILE: "1"
+    volumes:
+      - ./logs:/app/logs
