@@ -1,0 +1,94 @@
+# Docker Compose for EC2 Production Deployment
+# This extends the base compose.yaml and adds production-specific services
+
+services:
+  # Production uses volumes for data persistence
+  db:
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 || exit 1",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    environment:
+      DJANGO_ENV: production
+      DEBUG: "False"
+    volumes:
+      - /var/log/statuswatch:/app/logs
+    healthcheck:
+      test: >
+        python -c "import json,urllib.request,sys;
+        req=urllib.request.Request('http://127.0.0.1:8000/health/', headers={'X-Forwarded-Proto':'https','Host':'localhost'});
+        resp=urllib.request.urlopen(req, timeout=5);
+        sys.exit(0 if json.load(resp).get('status')=='healthy' else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    environment:
+      DJANGO_ENV: production
+      DEBUG: "False"
+    volumes:
+      - /var/log/statuswatch:/app/logs
+
+  beat:
+    environment:
+      DJANGO_ENV: production
+      DEBUG: "False"
+    volumes:
+      - /var/log/statuswatch:/app/logs
+
+  # Caddy for HTTPS/TLS - PRODUCTION ONLY
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 support
+    depends_on:
+      web:
+        condition: service_healthy
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:2019/metrics",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  dbdata:
+  redisdata:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
