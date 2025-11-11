@@ -5,6 +5,7 @@ djangorestframework-simplejwt
 django-cors-headers
 stripe
 celery
+django-celery-beat
 redis
 gunicorn
 whitenoise
