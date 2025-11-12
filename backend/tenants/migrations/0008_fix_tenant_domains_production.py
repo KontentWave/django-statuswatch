@@ -62,7 +62,7 @@ def reverse_fix(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("tenants", "0002_add_localhost_domain"),
+        ("tenants", "0007_add_loopback_domains"),
     ]
 
     operations = [
