@@ -23,10 +23,17 @@ def fix_tenant_domains(apps, schema_editor):
     )
 
     updated_count = 0
+    skipped_count = 0
     for domain in localhost_domains:
         old_domain = domain.domain
         # Replace .localhost with .statuswatch.kontentwave.digital
         new_domain = old_domain.replace(".localhost", ".statuswatch.kontentwave.digital")
+
+        # Check if the new domain already exists (avoid duplicate key error)
+        if Domain.objects.filter(domain=new_domain).exists():
+            print(f"⏭️  Skipping {old_domain} - {new_domain} already exists")
+            skipped_count += 1
+            continue
 
         # Update the domain
         domain.domain = new_domain
@@ -37,7 +44,9 @@ def fix_tenant_domains(apps, schema_editor):
 
     if updated_count > 0:
         print(f"\n✅ Successfully updated {updated_count} tenant domain(s)")
-    else:
+    if skipped_count > 0:
+        print(f"⏭️  Skipped {skipped_count} domain(s) (already exist)")
+    if updated_count == 0 and skipped_count == 0:
         print("ℹ️  No .localhost domains found to update")
 
 
