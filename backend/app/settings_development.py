@@ -28,6 +28,15 @@ ALLOWED_HOSTS = [
 ]
 
 # -------------------------------------------------------------------
+# Tenant Domain Configuration (Development)
+# -------------------------------------------------------------------
+# Default suffix for tenant subdomains in development
+DEFAULT_TENANT_DOMAIN_SUFFIX = env(  # noqa: F405
+    "DEFAULT_TENANT_DOMAIN_SUFFIX",
+    default="localhost",  # For local Vite dev server (e.g., acme.localhost:5173)
+)
+
+# -------------------------------------------------------------------
 # JWT Configuration (Development)
 # -------------------------------------------------------------------
 SIMPLE_JWT["SIGNING_KEY"] = SECRET_KEY  # noqa: F405

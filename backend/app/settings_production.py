@@ -59,6 +59,15 @@ ALLOWED_HOSTS = env.list(  # noqa: F405
 )
 
 # -------------------------------------------------------------------
+# Tenant Domain Configuration (Production)
+# -------------------------------------------------------------------
+# Default suffix for tenant subdomains (e.g., acme.statuswatch.kontentwave.digital)
+DEFAULT_TENANT_DOMAIN_SUFFIX = env(  # noqa: F405
+    "DEFAULT_TENANT_DOMAIN_SUFFIX",
+    default="statuswatch.kontentwave.digital",
+)
+
+# -------------------------------------------------------------------
 # JWT Configuration (Production)
 # -------------------------------------------------------------------
 SIMPLE_JWT["SIGNING_KEY"] = SECRET_KEY  # noqa: F405
