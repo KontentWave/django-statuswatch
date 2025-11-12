@@ -12,6 +12,38 @@ function hasSubdomain(): boolean {
 }
 
 /**
+ * Get the public (root) domain from current hostname
+ * Examples:
+ *   acme.statuswatch.kontentwave.digital → statuswatch.kontentwave.digital
+ *   tenant.localhost → localhost
+ */
+function getPublicDomain(): string {
+  const hostname = window.location.hostname;
+
+  // For localhost development
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return hostname;
+  }
+
+  // For production: extract root domain (last 2 or 3 parts depending on TLD)
+  const parts = hostname.split(".");
+
+  // Handle subdomain.domain.tld or subdomain.domain.co.uk patterns
+  if (parts.length >= 3) {
+    // Take last 3 parts if second-to-last is short (likely TLD like co.uk)
+    const secondLast = parts[parts.length - 2];
+    if (secondLast.length <= 3) {
+      return parts.slice(-3).join(".");
+    }
+    // Otherwise take last 2 parts (domain.tld)
+    return parts.slice(-2).join(".");
+  }
+
+  // Fallback: return as-is
+  return hostname;
+}
+
+/**
  * Validate tenant subdomain exists, redirect to public domain if not
  */
 async function validateTenantSubdomain() {
@@ -28,7 +60,9 @@ async function validateTenantSubdomain() {
     console.warn(
       "Invalid tenant subdomain detected, redirecting to public domain"
     );
-    window.location.href = `${window.location.protocol}//localhost:${window.location.port}/`;
+    const publicDomain = getPublicDomain();
+    const port = window.location.port ? `:${window.location.port}` : "";
+    window.location.href = `${window.location.protocol}//${publicDomain}${port}/`;
   }
 }
 

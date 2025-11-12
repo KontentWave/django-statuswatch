@@ -1,4 +1,7 @@
 {
+    # Enable admin API for healthchecks
+    admin 0.0.0.0:2019
+
     # Global options for on-demand TLS
     on_demand_tls {
         ask http://web:8000/api/internal/validate-domain/
