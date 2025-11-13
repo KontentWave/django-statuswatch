@@ -1,4 +1,8 @@
-# EC2 Deployment Guide - Matching Your Current Setup
+# EC2 Deployment Guide - StatusWatch Production
+
+> **Navigation:** [← Back to README](../../README.md) | [Diagnostic Scripts](diag-scripts/README.md) | [ADR: Deployment](../docs/ADRs/Phase%202/08-deployment.md)
+
+---
 
 ## Your EC2 File Structure
 
@@ -475,3 +479,12 @@ The only thing needed for the Beat fix:
 3. 🚀 Run migration script on EC2 (see above)
 
 Perfect setup! 🎉
+
+---
+
+## Related Documentation
+
+- **[← Back to README](../../README.md)** - Project overview and quick start
+- **[Diagnostic Scripts](diag-scripts/README.md)** - Production monitoring tools
+- **[ADR 08: Deployment](../docs/ADRs/Phase%202/08-deployment.md)** - Architecture decisions
+- **[Project Documentation](../docs/StatusWatch_project_sheet.md)** - Complete specifications

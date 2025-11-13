@@ -1,3 +1,9 @@
+# StatusWatch - Complete Project Documentation
+
+> **Navigation:** [← Back to README](../../README.md) | [Deployment Guide](../deployment/EC2_DEPLOYMENT_GUIDE.md) | [ADRs](ADRs/) | [Diagnostic Scripts](../deployment/diag-scripts/README.md)
+
+---
+
 ## Phase 1 MVP Specification
 
 Here is a detailed breakdown of the features for your MVP. Each feature includes the user goal, front-end tasks, and the back-end tasks required to support them.
@@ -1441,6 +1447,19 @@ cp -r dist/* /opt/statuswatch/frontend-dist/
 StatusWatch is successfully deployed on EC2 with proper multi-tenant domain configuration, on-demand TLS, comprehensive monitoring, and emergency response tools. All critical issues resolved. System performing within acceptable parameters.
 
 ---
+
+## Related Documentation
+
+- **[← Back to README](../../README.md)** - Project overview and quick start
+- **[Deployment Guide](../deployment/EC2_DEPLOYMENT_GUIDE.md)** - Complete EC2 setup
+- **[ADR 08: Deployment](ADRs/Phase%202/08-deployment.md)** - Architecture decisions
+- **[Diagnostic Scripts](../deployment/diag-scripts/README.md)** - Production monitoring tools
+- **[All ADRs](ADRs/)** - Architecture decision records
+
+---
+
+**Last Updated:** November 13, 2025  
+**Status:** Production Stable
 
 **Detailed Deployment ADR:** `.github/docs/ADRs/Phase 2/08-deployment.md`  
 **Last Updated:** November 12, 2025, 22:30 CET  

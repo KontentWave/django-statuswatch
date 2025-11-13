@@ -1,5 +1,9 @@
 # ADR 08: Production Deployment and Environment Adaptation
 
+> **Navigation:** [← Back to README](../../../../README.md) | [Deployment Guide](../../../deployment/EC2_DEPLOYMENT_GUIDE.md) | [Diagnostic Scripts](../../../deployment/diag-scripts/README.md) | [Project Overview](../../StatusWatch_project_sheet.md)
+
+---
+
 **Date:** November 12, 2025  
 **Status:** Implemented  
 **Decision Makers:** Development Team  
@@ -1064,3 +1068,13 @@ monitors
 **Status:** ✅ Production deployed and stable  
 **Last Updated:** November 12, 2025, 22:30 CET  
 **Next Review:** 7 days (post-deployment monitoring)
+
+---
+
+## Related Documentation
+
+- **[← Back to README](../../../../README.md)** - Project overview and quick start
+- **[Deployment Guide](../../../deployment/EC2_DEPLOYMENT_GUIDE.md)** - Step-by-step EC2 setup
+- **[Diagnostic Scripts](../../../deployment/diag-scripts/README.md)** - Production monitoring tools
+- **[Project Documentation](../../StatusWatch_project_sheet.md)** - Complete specifications
+- **[All ADRs](../)** - Architecture decision records

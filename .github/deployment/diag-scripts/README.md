@@ -1,5 +1,9 @@
 # StatusWatch Production Diagnostic Scripts (Public Templates)
 
+> **Navigation:** [← Back to README](../../../README.md) | [Deployment Guide](../EC2_DEPLOYMENT_GUIDE.md) | [ADR: Deployment](../../docs/ADRs/Phase%202/08-deployment.md)
+
+---
+
 These are **sanitized templates** for demonstration and portfolio purposes.
 
 ## 🔒 Security Notice
@@ -319,3 +323,12 @@ MIT License - See main repository for details
 **Maintained by:** StatusWatch Development Team  
 **Last Updated:** November 13, 2025  
 **Version:** 1.0.0
+
+---
+
+## Related Documentation
+
+- **[← Back to README](../../../README.md)** - Project overview and quick start
+- **[Deployment Guide](../EC2_DEPLOYMENT_GUIDE.md)** - Complete EC2 setup
+- **[ADR 08: Deployment](../../docs/ADRs/Phase%202/08-deployment.md)** - Architecture decisions
+- **[Project Documentation](../../docs/StatusWatch_project_sheet.md)** - Complete specifications
