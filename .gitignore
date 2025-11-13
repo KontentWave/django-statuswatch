@@ -62,7 +62,11 @@ frontend/logs/
 !.github/logs/**
 
 # Temporary/backup files
-scripts/
+# Ignore ONLY root /scripts/ (private scripts with real IPs)
+/scripts/
+# But allow .github/deployment/diag-scripts/ (public templates)
+!.github/deployment/diag-scripts/
+
 *.tmp
 *.bak
 *.swp
