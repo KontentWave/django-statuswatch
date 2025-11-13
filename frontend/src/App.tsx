@@ -25,21 +25,16 @@ function getPublicDomain(): string {
     return hostname;
   }
 
-  // For production: extract root domain (last 2 or 3 parts depending on TLD)
+  // For production: strip the first subdomain part
   const parts = hostname.split(".");
 
-  // Handle subdomain.domain.tld or subdomain.domain.co.uk patterns
-  if (parts.length >= 3) {
-    // Take last 3 parts if second-to-last is short (likely TLD like co.uk)
-    const secondLast = parts[parts.length - 2];
-    if (secondLast.length <= 3) {
-      return parts.slice(-3).join(".");
-    }
-    // Otherwise take last 2 parts (domain.tld)
-    return parts.slice(-2).join(".");
+  // If we have a subdomain (e.g., acme.statuswatch.kontentwave.digital)
+  // Remove the first part to get the public domain (statuswatch.kontentwave.digital)
+  if (parts.length >= 2) {
+    return parts.slice(1).join(".");
   }
 
-  // Fallback: return as-is
+  // Fallback: return as-is (shouldn't happen in practice)
   return hostname;
 }
 

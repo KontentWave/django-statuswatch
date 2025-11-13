@@ -16,10 +16,30 @@ import { getAccessToken } from "@/lib/auth";
 
 /**
  * Check if current domain is the public domain (not a tenant subdomain)
+ * - localhost / 127.0.0.1 = public (dev)
+ * - statuswatch.kontentwave.digital = public (prod)
+ * - acme.statuswatch.kontentwave.digital = tenant subdomain
  */
 function isPublicDomain(): boolean {
   const hostname = window.location.hostname;
-  return hostname === "localhost" || hostname === "127.0.0.1";
+
+  // Development: localhost is public domain
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return true;
+  }
+
+  // Production: check if we're on the root domain (no subdomain prefix)
+  // Count dots: statuswatch.kontentwave.digital has 2 dots (public)
+  //            acme.statuswatch.kontentwave.digital has 3 dots (tenant)
+  const parts = hostname.split(".");
+
+  // If hostname is exactly "statuswatch.kontentwave.digital" (3 parts), it's public
+  // If it has more parts (e.g., "acme.statuswatch.kontentwave.digital"), it's a tenant
+  if (parts.length === 3 && parts[0] === "statuswatch") {
+    return true; // Public domain
+  }
+
+  return false; // Tenant subdomain
 }
 
 /**
