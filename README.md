@@ -125,11 +125,11 @@ This project includes a **complete production deployment** on AWS EC2:
 Production-ready scripts for 2AM incidents:
 
 ```bash
-./scripts/health-check.sh           # 10 health checks (SSL, DB, Redis, disk, memory)
-./scripts/db-check.sh               # Database diagnostics
-./scripts/emergency-restart.sh      # Safe container restart
-./scripts/tail-logs.sh --errors     # Live error monitoring
-./scripts/deploy.sh                 # Deployment automation
+.github/deployment/diag-scripts/health-check.sh           # 10 health checks (SSL, DB, Redis, disk, memory)
+.github/deployment/diag-scripts/db-check.sh               # Database diagnostics
+.github/deployment/diag-scripts/emergency-restart.sh      # Safe container restart
+.github/deployment/diag-scripts/tail-logs.sh --errors     # Live error monitoring
+.github/deployment/diag-scripts/deploy.sh                 # Deployment automation
 ```
 
 👉 **See:** [`.github/deployment/diag-scripts/README.md`](.github/deployment/diag-scripts/README.md)
