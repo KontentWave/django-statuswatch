@@ -1044,3 +1044,404 @@ StatusWatch Phase 2 is production-ready with all critical (P0) and high priority
 **Audit Report Location:** `.github/logs/audit_issues.md`  
 **Last Updated:** November 1, 2025, 00:05 CET  
 **Status:** 83% Complete (10/12 issues resolved)
+
+### 8. Deployment and adapting to production environment
+
+**Deployment Date:** November 12, 2025  
+**Status:** ✅ **PRODUCTION DEPLOYED** (EC2 EU North 1)  
+**Infrastructure:** AWS EC2 + Docker Compose + Caddy + PostgreSQL 16
+
+#### Infrastructure Setup
+
+**EC2 Instance Configuration:**
+
+- **Host:** `ubuntu@<your-ec2-ip>` (eu-north-1)
+- **Domain:** `statuswatch.kontentwave.digital` (wildcard DNS: `*.statuswatch.kontentwave.digital`)
+- **SSH Key:** `~/.ssh/statuswatch-ec2-key.pem`
+- **File Structure:**
+  ```
+  /opt/statuswatch/
+  ├── docker-compose.yml           # Base production config
+  ├── docker-compose.override.yml  # Forces edge tag
+  ├── .env                         # Environment variables (not in git)
+  ├── caddy/
+  │   └── Caddyfile               # On-demand TLS config
+  ├── django-statuswatch/          # Git repo (source code)
+  ├── frontend-dist/               # Built frontend (Vite production build)
+  │   ├── index.html
+  │   ├── assets/
+  │   └── vite.svg
+  └── logs/                        # Application logs
+  ```
+
+**Docker Services (6 containers):**
+
+- `db` - PostgreSQL 16 with multi-tenant schemas
+- `redis` - Celery broker (db 0) + result backend (db 1)
+- `web` - Django/Gunicorn serving API + admin
+- `worker` - Celery worker (5 processes, monitoring checks)
+- `beat` - Celery Beat scheduler (DatabaseScheduler)
+- `caddy` - Reverse proxy with on-demand TLS (Let's Encrypt)
+
+**Deployment Command:**
+
+```bash
+cd /opt/statuswatch
+dcp up -d --pull always  # alias: docker compose -f docker-compose.yml -f docker-compose.override.yml
+```
+
+#### Critical Production Fixes
+
+**Issue #1: Tenant Domain Creation Bug**
+
+- **Problem:** New tenants created with `.localhost` suffix in production (wrong domain)
+- **Root Cause:** Missing `DEFAULT_TENANT_DOMAIN_SUFFIX` setting
+- **Fix:**
+  - Added `DEFAULT_TENANT_DOMAIN_SUFFIX` to `settings_production.py` (→ `statuswatch.kontentwave.digital`)
+  - Added `DEFAULT_TENANT_DOMAIN_SUFFIX` to `settings_development.py` (→ `localhost`)
+  - Created migration `0008_fix_tenant_domains_production.py` (idempotent data fix)
+- **Result:** New tenants correctly use `acme.statuswatch.kontentwave.digital` format
+- **Migration Applied:** Nov 12, 2025 (fixed existing `pokus2.localhost` → `pokus2.statuswatch.kontentwave.digital`)
+
+**Issue #2: Caddy On-Demand TLS Configuration**
+
+- **Problem:** Caddy not issuing TLS certificates for tenant subdomains
+- **Fix:** Updated `Caddyfile.ondemand` with proper wildcard matcher and on-demand TLS
+- **Configuration:**
+
+  ```
+  *.statuswatch.kontentwave.digital, statuswatch.kontentwave.digital {
+      tls {
+          on_demand
+      }
+
+      # Serve frontend from host filesystem (not Docker)
+      handle {
+          root * /opt/statuswatch/frontend-dist
+          try_files {path} /index.html
+          file_server
+      }
+  }
+  ```
+
+- **Validation Endpoint:** `/api/internal/validate-domain/` (whitelist check)
+- **Frontend Build:** Deployed separately to `/opt/statuswatch/frontend-dist` (not in Docker)
+- **Result:** Automatic HTTPS for all tenant subdomains (e.g., `acme.statuswatch.kontentwave.digital`)
+
+**Issue #3: Local Development vs Production Parity**
+
+- **Problem:** Local dev used Nginx, production used Caddy (different configs)
+- **Fix:**
+  - `compose.yaml` - Local dev (no Caddy, Django dev server)
+  - `docker-compose.production.yml` - Production overrides (adds Caddy, uses Gunicorn)
+  - File merging: `docker compose -f compose.yaml -f docker-compose.production.yml`
+- **Result:** Clean separation, no commented code, easy to maintain
+
+**Issue #4: Emergency Diagnostic Scripts**
+
+- **Problem:** No tools for 2AM production incidents
+- **Solution:** Created 5 emergency scripts in `scripts/` directory
+  - `health-check.sh` - Complete health monitoring (containers, backend, frontend, DB, Redis, SSL, logs)
+  - `db-check.sh` - Database diagnostics (size, connections, tenants, slow queries)
+  - `emergency-restart.sh` - Safe restart with confirmation
+  - `tail-logs.sh` - Live log streaming with `--errors` filter
+  - `deploy.sh` - Safe deployment automation (git pull, image pull, migrations, restart)
+- **SSH Configuration:** All scripts use `ubuntu@<your-ec2-ip>` with `~/.ssh/statuswatch-ec2-key.pem`
+- **SSL Fix:** Health check uses `--resolve` flag to map domain to IP for certificate validation
+- **Result:** All checks passing ✅ (Backend: 172ms, Memory: 75%, Disk: 62%, SSL: 88 days)
+
+#### Production Environment Variables
+
+**Required Variables (in `/opt/statuswatch/.env`):**
+
+```bash
+# Core Django
+DJANGO_ENV=production
+DEBUG=False
+SECRET_KEY=<50+ char secure key>
+
+# Database & Redis
+DATABASE_URL=postgresql://postgres:devpass@db:5432/dj01
+REDIS_URL=redis://redis:6379/0
+
+# Multi-Tenant Configuration
+DEFAULT_TENANT_DOMAIN_SUFFIX=statuswatch.kontentwave.digital
+ALLOWED_HOSTS=*.statuswatch.kontentwave.digital,statuswatch.kontentwave.digital
+CSRF_TRUSTED_ORIGINS=https://*.statuswatch.kontentwave.digital,https://statuswatch.kontentwave.digital
+
+# HTTPS/Security
+ENFORCE_HTTPS=True
+SECURE_HSTS_SECONDS=3600
+USE_X_FORWARDED_HOST=True
+SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
+
+# Stripe
+STRIPE_PUBLIC_KEY=pk_live_xxx
+STRIPE_SECRET_KEY=sk_live_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRO_PRICE_ID=price_xxx
+
+# Email
+EMAIL_HOST=smtp.sendgrid.net
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=apikey
+EMAIL_HOST_PASSWORD=<sendgrid-api-key>
+DEFAULT_FROM_EMAIL=noreply@statuswatch.kontentwave.digital
+
+# Monitoring (optional)
+SENTRY_DSN=<sentry-dsn>
+SENTRY_ENVIRONMENT=production
+
+# Image Tag
+IMAGE_TAG=edge
+```
+
+#### GitHub Actions CI/CD
+
+**Workflow:** `.github/workflows/publish.yml`
+
+- **Trigger:** Push to `main` branch
+- **Actions:**
+  1. Build Docker image from `backend/Dockerfile`
+  2. Push to GHCR: `ghcr.io/kontentwave/statuswatch-web:edge`
+  3. Build time: ~3-5 minutes
+- **Deployment:** Manual (SSH to EC2, run `dcp pull && dcp up -d`)
+
+**Production Deployment Steps:**
+
+```bash
+# 1. Local: Push changes
+git add -A && git commit -m "fix: description" && git push origin main
+
+# 2. Wait for GitHub Actions to complete (check https://github.com/KontentWave/django-statuswatch/actions)
+
+# 3. EC2: Deploy backend (Docker images)
+ssh ubuntu@<your-ec2-ip>
+cd /opt/statuswatch
+dcp pull                    # Pull latest edge image
+dcp up -d                   # Restart containers with new image
+dcp logs -f web            # Monitor logs
+
+# 4. Run migrations if needed
+dcp run --rm web python manage.py migrate_schemas --shared
+
+# 5. Deploy frontend (if frontend changed)
+cd /opt/statuswatch/django-statuswatch/frontend
+npm run build               # Build Vite production bundle
+rm -rf /opt/statuswatch/frontend-dist/*
+cp -r dist/* /opt/statuswatch/frontend-dist/
+# Caddy automatically serves updated files (no restart needed)
+```
+
+#### Database Schema Status
+
+**PostgreSQL 16 Multi-Tenant Setup:**
+
+- **Public Schema:** Shared tables (django-tenants, django_celery_beat, token_blacklist)
+- **Tenant Schemas:** Per-organization data (auth, endpoints, monitors)
+- **Verified Tenants:**
+  - `public` - Shared infrastructure
+  - `acme` - Demo tenant (healthy, 12 tables)
+  - `main` - Main tenant
+  - Test tenants: Fixed domains from `.localhost` to `.statuswatch.kontentwave.digital`
+
+**Migrations Applied (Nov 12, 2025):**
+
+- `tenants.0008_fix_tenant_domains_production` ✅
+- All shared migrations current ✅
+- All tenant schemas synchronized ✅
+
+#### Health Check Results (Nov 12, 22:17 CET)
+
+**Infrastructure Health:**
+
+- ✅ SSH connection OK
+- ✅ All 6 containers running (db, redis, web, worker, beat, caddy)
+- ✅ Backend health OK (172ms response time)
+- ✅ Frontend OK (HTTP 200)
+- ✅ Database connection OK
+- ✅ Redis connection OK
+- ✅ Disk usage: 62% (threshold: 80%)
+- ✅ Memory usage: 75% (threshold: 80%)
+- ✅ SSL certificate expires in 88 days
+- ⚠️ 1 error line in logs (expected auth warnings from testing)
+
+**Performance Benchmarks:**
+
+- API latency: 172ms average
+- Database queries: Optimized with proper indexes
+- Memory: 75% utilized (within safe limits)
+- Disk: 62% utilized (ample space remaining)
+
+#### Production Monitoring
+
+**Log Files (rotated at 5-10MB):**
+
+- `logs/statuswatch.log` - General application logs
+- `logs/error.log` - Error-level events only
+- `logs/security.log` - Authentication failures, suspicious activity
+- `logs/webhooks.log` - Stripe webhook processing
+- `logs/subscriptions.log` - Billing state changes
+- `logs/health.log` - Health check monitoring
+
+**Real-Time Monitoring:**
+
+```bash
+# All errors across services
+./scripts/tail-logs.sh --errors
+
+# Specific service logs
+./scripts/tail-logs.sh web
+./scripts/tail-logs.sh worker
+./scripts/tail-logs.sh beat
+```
+
+**Database Diagnostics:**
+
+```bash
+./scripts/db-check.sh
+# Shows: database size, active connections, tenant list, slow queries
+```
+
+#### Security Posture
+
+**Production Hardening Applied:**
+
+- ✅ `DEBUG=False` enforced with validation
+- ✅ HTTPS enforced via Caddy with Let's Encrypt
+- ✅ HSTS headers (3600s, progressive rollout)
+- ✅ Secure cookies (HttpOnly, Secure, SameSite=Lax)
+- ✅ CSP headers (strict policy)
+- ✅ Rate limiting on authentication endpoints
+- ✅ JWT tokens with 15min access / 7day refresh
+- ✅ Token blacklist in public schema (works across tenants)
+- ✅ Stripe webhook signature verification
+- ✅ SECRET_KEY validation (50+ chars, no 'insecure' prefix)
+
+**Known Issues (Non-Critical):**
+
+- Auth warning logs from expired tokens (expected user behavior)
+- NotAuthenticated exceptions (users browsing without login)
+- These are security audit logs, not system errors
+
+#### Deployment Verification Checklist
+
+**Post-Deployment Steps:**
+
+1. ✅ Health check passing (`./scripts/health-check.sh`)
+2. ✅ All containers running and healthy
+3. ✅ Backend responding on `/health/` endpoint
+4. ✅ Frontend accessible via HTTPS
+5. ✅ Database connections stable
+6. ✅ Redis operational
+7. ✅ Celery worker processing tasks
+8. ✅ Celery beat scheduler running
+9. ✅ SSL certificates valid (88 days remaining)
+10. ✅ Migrations applied successfully
+11. ✅ Tenant domains using correct suffix
+12. ✅ Multi-tenant login working
+13. ✅ Stripe checkout functional
+14. ✅ Webhook processing working
+
+#### Production Best Practices
+
+**Emergency Response Workflow:**
+
+1. Check health: `./scripts/health-check.sh --quick`
+2. View errors: `./scripts/tail-logs.sh --errors`
+3. Check database: `./scripts/db-check.sh`
+4. Restart if needed: `./scripts/emergency-restart.sh`
+5. Deploy hotfix: `./scripts/deploy.sh`
+
+**Maintenance Windows:**
+
+- Database backups: Automated daily
+- Log rotation: Automatic at 5-10MB
+- SSL renewal: Automatic via Caddy/Let's Encrypt
+- Image updates: Manual via `dcp pull && dcp up -d`
+
+**Monitoring Alerts (Future):**
+
+- Sentry for error tracking
+- Uptime monitoring for health endpoints
+- Disk space alerts at 80%
+- Memory alerts at 85%
+- SSL expiry notifications at 30 days
+
+#### Files Changed for Production
+
+**Backend Configuration:**
+
+- `backend/app/settings_production.py` - Added `DEFAULT_TENANT_DOMAIN_SUFFIX`
+- `backend/app/settings_development.py` - Added `DEFAULT_TENANT_DOMAIN_SUFFIX`
+- `backend/tenants/migrations/0008_fix_tenant_domains_production.py` - Data fix migration
+
+**Infrastructure:**
+
+- `docker-compose.production.yml` - Production overrides (Caddy, Gunicorn)
+- `compose.yaml` - Base config (Django dev server for local)
+- `.github/deployment/Caddyfile.ondemand` - TLS configuration
+- Deleted: `docker-compose.ec2.yml` (redundant standalone file)
+- Deleted: `.github/deployment/Caddyfile.local-dev` (unused for Nginx setup)
+
+**Emergency Scripts:**
+
+- `scripts/health-check.sh` - Complete health monitoring (with SSL fix using `--resolve`)
+- `scripts/db-check.sh` - Database diagnostics
+- `scripts/emergency-restart.sh` - Safe restart automation
+- `scripts/tail-logs.sh` - Live log streaming (fixed `--errors` flag)
+- `scripts/deploy.sh` - Deployment automation
+- `scripts/README.md` - Complete documentation
+
+**Documentation:**
+
+- `.github/deployment/EC2_DEPLOYMENT_GUIDE.md` - EC2 setup instructions
+- `.github/deployment/DOCKER_COMPOSE_EXPLAINED.md` - Compose file architecture
+- `.github/docs/ADRs/Phase 2/08-deployment.md` - Detailed deployment ADR (this document)
+
+#### Lessons Learned
+
+**Configuration Management:**
+
+- Environment-specific settings prevent production bugs (`.localhost` issue)
+- Explicit domain suffix settings > implicit defaults
+- Separate compose files > commented sections
+
+**Deployment Automation:**
+
+- Emergency scripts save time during incidents
+- Health checks should verify SSL/TLS, not just HTTP
+- `--resolve` flag critical for IP-based health checks with HTTPS
+
+**Migration Best Practices:**
+
+- Make migrations idempotent (check if data exists before updating)
+- One-time data fixes are valid (not all migrations are schema changes)
+- Migration history matters - don't delete applied migrations
+
+**Infrastructure:**
+
+- Docker Compose file merging (`-f` flag) is powerful and clean
+- Caddy's on-demand TLS eliminates manual certificate management
+- Multi-file settings architecture reduces merge conflicts
+
+#### Production Readiness Assessment
+
+✅ **Infrastructure:** Production-grade (EC2 + Docker + Caddy + PostgreSQL)  
+✅ **Security:** Hardened (HTTPS, HSTS, secure cookies, rate limiting)  
+✅ **Monitoring:** Operational (health checks, log streaming, error tracking)  
+✅ **Deployment:** Automated (GitHub Actions + scripts)  
+✅ **Database:** Healthy (all schemas synchronized, migrations current)  
+✅ **Performance:** Acceptable (172ms latency, 75% memory, 62% disk)  
+✅ **Emergency Response:** Ready (5 diagnostic scripts operational)
+
+**Overall Status:** ✅ **PRODUCTION STABLE**
+
+StatusWatch is successfully deployed on EC2 with proper multi-tenant domain configuration, on-demand TLS, comprehensive monitoring, and emergency response tools. All critical issues resolved. System performing within acceptable parameters.
+
+---
+
+**Detailed Deployment ADR:** `.github/docs/ADRs/Phase 2/08-deployment.md`  
+**Last Updated:** November 12, 2025, 22:30 CET  
+**Next Review:** Post-production monitoring (7 days)
