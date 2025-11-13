@@ -18,7 +18,7 @@ from app.settings_base import *  # noqa: F403, F401
 # -------------------------------------------------------------------
 # Core Production Settings
 # -------------------------------------------------------------------
-DEBUG = False
+DEBUG = env.bool("DEBUG", default=False)  # noqa: F405
 
 # -------------------------------------------------------------------
 # Secret Key Validation (Production)

@@ -112,31 +112,21 @@ function canUseFileLogger(): boolean {
 }
 
 function createFileLogger(name: string, filePath: string): Logger {
-  let fsPromise: Promise<typeof import("node:fs/promises")> | null = null;
-  let pathPromise: Promise<typeof import("node:path")> | null = null;
-
-  async function resolveFs() {
-    if (!fsPromise) {
-      fsPromise = import("node:fs/promises");
-    }
-    return fsPromise;
-  }
-
-  async function resolvePath() {
-    if (!pathPromise) {
-      pathPromise = import("node:path");
-    }
-    return pathPromise;
-  }
-
+  // Browser-safe logger - no file system access in browser
+  // Files are only written in Node.js test environment
   return {
     async log(event: string, data?: unknown): Promise<void> {
-      const [{ appendFile, mkdir }, { dirname }] = await Promise.all([
-        resolveFs(),
-        resolvePath(),
-      ]);
+      // Skip file operations in browser (Node.js modules not available)
+      if (typeof window !== "undefined") {
+        // In browser: just log to console (file logging only in tests)
+        return;
+      }
 
-      await mkdir(dirname(filePath), { recursive: true });
+      // In Node.js (tests): dynamically import fs/path to avoid Vite externalization
+      const fs = await import("fs/promises");
+      const path = await import("path");
+
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
 
       const base: LogEntry = {
         timestamp: new Date().toISOString(),
@@ -152,7 +142,7 @@ function createFileLogger(name: string, filePath: string): Logger {
           : { value: data };
 
       const entry = { ...base, ...payload };
-      await appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
     },
   };
 }
