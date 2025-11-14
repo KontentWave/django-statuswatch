@@ -1469,7 +1469,7 @@ StatusWatch is successfully deployed on EC2 with proper multi-tenant domain conf
 
 ### 9. Refactor to Modular Monolith
 
-**Status:** `Pending`
+**Status:** `In Progress`
 
 **Description:**
 As the application has grown through Phase 1 and 2, the initial Django project structure has accumulated complexity. This phase focuses on paying down this technical debt by refactoring the backend into a **Modular Monolith**. The goal is to establish clearer domain boundaries (e.g., `accounts`, `monitoring`, `billing`), improve separation of concerns, and increase long-term maintainability without the operational overhead of microservices.
@@ -1551,11 +1551,15 @@ This process keeps the legacy stack untouched while giving the refactor a realis
 
 **Goal:** carve out the first reusable modules without regressing existing behaviour. The milestone is complete only if all listed tests pass against the modular compose stack (`docker-compose.mod.yml`).
 
-1. **Module scaffolding**
+1. **Module scaffolding** ✅
 
 - Create `modules/core/`, `modules/tenancy/`, and `modules/accounts/` packages.
 - Extract service objects (`TenantProvisioner`, `TenantDomainService`, `TenantAuthService`) that wrap the current management logic.
-- Acceptance test: `pytest backend/tests/test_registration.py backend/tests/test_multi_tenant_auth.py` passes with the new services imported.
+- Add direct module tests: `backend/tests/test_modules_tenant_provisioner.py` and `backend/tests/test_modules_tenant_auth_service.py` cover provisioning payloads and auth delegation.
+- Acceptance tests run on Nov 14, 2025:
+  - `pytest backend/tests/test_modules_tenant_provisioner.py backend/tests/test_registration.py`
+  - `pytest backend/tests/test_modules_tenant_auth_service.py backend/tests/test_multi_tenant_auth.py`
+  - Full suite (`pytest`) → **278 passed, 4 skipped** (skips are known long-running diagnostics).
 
 2. **Settings + URLs centralization**
 
