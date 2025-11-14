@@ -1547,9 +1547,29 @@ docker compose -f compose.yaml -f docker-compose.mod.yml down
 
 This process keeps the legacy stack untouched while giving the refactor a realistic environment (own DB, Redis, logs, and image tag). Re-run steps 1–4 whenever you change backend code or need a clean database for testing. Steps 5–6 are reversible toggles for frontend routing.
 
-#### Milestone M1 – Tenant/Auth foundation
+#### Milestone M1 – Tenant/Auth foundation _(testable)_
 
-1. Create `modules/accounts/` and `modules/tenancy/` packages that wrap the current `tenants/` + auth helpers with explicit service facades (`TenantProvisioner`, `TenantAuthService`).
-2. Move shared settings + URL routers into `modules/core/` so modular apps can import without circular dependencies.
-3. Update auth + tenant tests to target the new services while running the entire suite against the modular compose stack for parity.
-4. Document cutover/rollback steps in this sheet and keep `StatusWatch_project_sheet.md` updated before merging to `main`.
+**Goal:** carve out the first reusable modules without regressing existing behaviour. The milestone is complete only if all listed tests pass against the modular compose stack (`docker-compose.mod.yml`).
+
+1. **Module scaffolding**
+
+- Create `modules/core/`, `modules/tenancy/`, and `modules/accounts/` packages.
+- Extract service objects (`TenantProvisioner`, `TenantDomainService`, `TenantAuthService`) that wrap the current management logic.
+- Acceptance test: `pytest backend/tests/test_registration.py backend/tests/test_multi_tenant_auth.py` passes with the new services imported.
+
+2. **Settings + URLs centralization**
+
+- Move shared `INSTALLED_APPS`, middleware, and URL routers into `modules/core/settings.py` and `modules/core/urls.py`.
+- `app/settings.py` only wires env-specific overrides.
+- Acceptance test: `python backend/manage.py check` succeeds inside the mod API container.
+
+3. **Auth refresh alignment**
+
+- Point `api/token_refresh.py` and related views at `TenantAuthService`.
+- Ensure token blacklist still operates from the public schema.
+- Acceptance test: `pytest backend/api/tests/test_token_refresh.py` (or equivalent) plus a manual `curl` check via the mod stack (`POST /api/auth/token/refresh/`).
+
+4. **Document + rollback plan**
+
+- Update this sheet with the migration steps and rollback command (`git revert <commit>` + `docker compose -f docker-compose.mod.yml down -v`).
+- Acceptance test: documentation PR reviewed; `StatusWatch_project_sheet.md` reflects the above steps before merging `refactor/mod-monolith`.

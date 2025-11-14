@@ -28,12 +28,11 @@ The frontend should:
 
 import logging
 
+from modules.accounts.authentication import TenantAuthService
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from .auth_service import MultiTenantAuthenticationError, MultiTenantAuthService
 
 logger = logging.getLogger("api.auth")
 
@@ -62,6 +61,8 @@ class MultiTenantLoginView(APIView):
     # Disable authentication completely - this is a login endpoint (no user yet!)
     authentication_classes: list[type] = []
     permission_classes = [AllowAny]
+
+    auth_service_class = TenantAuthService
 
     def post(self, request):
         """
@@ -122,7 +123,7 @@ class MultiTenantLoginView(APIView):
                 )
 
                 # Authenticate using the multi-tenant service WITH specific tenant filter
-                auth_data = MultiTenantAuthService.authenticate_user(
+                auth_data = self.auth_service_class.authenticate_user(
                     username, password, tenant_schema=target_schema
                 )
 
@@ -150,7 +151,7 @@ class MultiTenantLoginView(APIView):
             )
 
             # Find all tenants that have this email
-            matches = MultiTenantAuthService.find_all_tenants_for_email(username)
+            matches = self.auth_service_class.find_all_tenants_for_email(username)
 
             if not matches:
                 logger.warning(f"[MULTI-TENANT-LOGIN] No user found with email: {username}")
@@ -166,7 +167,7 @@ class MultiTenantLoginView(APIView):
                 )
 
                 # Authenticate with the single matched tenant
-                auth_data = MultiTenantAuthService.authenticate_user(username, password)
+                auth_data = self.auth_service_class.authenticate_user(username, password)
 
                 logger.info(
                     f"[MULTI-TENANT-LOGIN] ✓ Login successful for user '{username}' "
@@ -201,7 +202,7 @@ class MultiTenantLoginView(APIView):
                     status=status.HTTP_200_OK,
                 )
 
-        except MultiTenantAuthenticationError as e:
+        except self.auth_service_class.AuthenticationError as e:
             logger.warning(f"[MULTI-TENANT-LOGIN] ✗ Login failed for user '{username}': {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
 
