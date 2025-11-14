@@ -1,7 +1,4 @@
-# Override file for EC2 production deployment
-# This forces the 'edge' tag (latest build from main branch)
-# Matches /opt/statuswatch/docker-compose.override.yml
-
+# Override for EC2 production deployment - forces the 'edge' tag (latest build)
 services:
   web:
     image: ghcr.io/kontentwave/statuswatch-web:edge

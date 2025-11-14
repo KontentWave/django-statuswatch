@@ -2,6 +2,8 @@
 
 > **Navigation:** [← Back to README](../../README.md) | [Deployment Guide](../deployment/EC2_DEPLOYMENT_GUIDE.md) | [ADRs](ADRs/) | [Diagnostic Scripts](../deployment/diag-scripts/README.md)
 
+> **Why this doc exists:** the public-facing README is intentionally kept to a ~60-second skim for recruiting/BD conversations. Use this internal sheet (plus the linked guides) for the real implementation details and day-to-day runbooks.
+
 ---
 
 ## Phase 1 MVP Specification
@@ -1464,3 +1466,90 @@ StatusWatch is successfully deployed on EC2 with proper multi-tenant domain conf
 **Detailed Deployment ADR:** `.github/docs/ADRs/Phase 2/08-deployment.md`  
 **Last Updated:** November 12, 2025, 22:30 CET  
 **Next Review:** Post-production monitoring (7 days)
+
+### 9. Refactor to Modular Monolith
+
+**Status:** `Pending`
+
+**Description:**
+As the application has grown through Phase 1 and 2, the initial Django project structure has accumulated complexity. This phase focuses on paying down this technical debt by refactoring the backend into a **Modular Monolith**. The goal is to establish clearer domain boundaries (e.g., `accounts`, `monitoring`, `billing`), improve separation of concerns, and increase long-term maintainability without the operational overhead of microservices.
+
+**Key Implementation Details:**
+
+- **Parallel Stack Strategy:** The refactor will be developed on a `refactor/mod-monolith` branch. To ensure a safe, isolated development process, a `docker-compose.mod.yml` override will be created. This spins up a _completely parallel stack_ (`api_mod`, `worker_mod`, `db_mod`, `redis_mod`) that runs alongside the existing stable stack.
+- **Complete Isolation:** This new "mod" stack will run on different ports (e.g., API on `8081`, DB on `5433`) and use its own dedicated database (`statuswatch_mod`) and Redis instances. This prevents any data collision, queue "double processing," or interference with the working application.
+- **Validation:** The frontend's Vite config will be temporarily pointed to the new modular API's origin (`http://localhost:8081`). The full suite of unit tests and the upcoming E2E test suite will be run against this new stack to confirm 100% behavioral parity.
+- **Cutover & Rollback:**
+  - **Cutover:** Once validated, the `refactor/mod-monolith` branch will be merged. The CI/CD pipeline will build and push the new images (e.g., `statuswatch:mod`). The production environment will be updated to use these new images, completing the migration.
+  - **Rollback:** Because the refactor is developed in isolation, a rollback is simple and low-risk. If any issues are found post-deployment, the production environment can be immediately reverted to the previous stable image tag.
+
+#### Modular Stack Workflow (local dev)
+
+Follow this checklist whenever you need to spin up the parallel stack for refactoring or verification. All commands run from the repo root (`/home/marcel/projects/statuswatch-project`).
+
+> **Env toggle:** copy `backend/.env.mod.example` → `backend/.env.mod` and `frontend/.env.example` → `frontend/.env.development.local`, then set `VITE_BACKEND_ORIGIN=http://acme.localhost:8081`. Remove that override to fall back to the legacy stack.
+
+1. **Build/tag the modular image** (once per code change):
+
+```bash
+docker build -f backend/Dockerfile -t ghcr.io/kontentwave/statuswatch-web:mod backend
+# or reuse the latest edge build locally
+docker tag ghcr.io/kontentwave/statuswatch-web:edge ghcr.io/kontentwave/statuswatch-web:mod
+```
+
+2. **Start the isolated services** (API/worker/beat + dedicated Postgres/Redis/volumes):
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml up -d mod_db mod_redis mod_api mod_worker mod_beat
+```
+
+Logs (for quick health checks):
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml logs -f mod_api
+```
+
+3. **Apply migrations inside the modular DB:**
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py migrate_schemas --shared
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py migrate_schemas
+```
+
+4. **Create a tenant + user for testing:**
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml exec -it mod_api python manage.py shell
+```
+
+```python
+from tenants.models import Client, Domain
+tenant = Client(schema_name="acme", name="Acme Inc."); tenant.save()
+Domain(domain="acme.localhost", tenant=tenant, is_primary=True).save()
+```
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api \
+  python manage.py create_tenant_superuser --schema=acme --email admin@acme.localhost
+```
+
+5. **Point the frontend at the modular API:**
+
+- Ensure `/etc/hosts` contains `127.0.0.1 acme.localhost` so the hostname resolves locally.
+- In `frontend/.env.development.local`, set `VITE_BACKEND_ORIGIN=http://acme.localhost:8081` (remove/comment later to revert to the proxyed stack).
+- Restart Vite (`npm run dev`) and browse `https://acme.localhost:5173` to exercise the modular backend.
+
+6. **Tear down when finished:**
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml down
+```
+
+This process keeps the legacy stack untouched while giving the refactor a realistic environment (own DB, Redis, logs, and image tag). Re-run steps 1–4 whenever you change backend code or need a clean database for testing. Steps 5–6 are reversible toggles for frontend routing.
+
+#### Milestone M1 – Tenant/Auth foundation
+
+1. Create `modules/accounts/` and `modules/tenancy/` packages that wrap the current `tenants/` + auth helpers with explicit service facades (`TenantProvisioner`, `TenantAuthService`).
+2. Move shared settings + URL routers into `modules/core/` so modular apps can import without circular dependencies.
+3. Update auth + tenant tests to target the new services while running the entire suite against the modular compose stack for parity.
+4. Document cutover/rollback steps in this sheet and keep `StatusWatch_project_sheet.md` updated before merging to `main`.

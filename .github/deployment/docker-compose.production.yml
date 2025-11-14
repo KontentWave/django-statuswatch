@@ -1,8 +1,7 @@
 # Docker Compose for EC2 Production Deployment
-# This extends the base compose.yaml and adds production-specific services
+# Extends compose.yaml with production-specific services
 
 services:
-  # Production uses volumes for data persistence
   db:
     volumes:
       - dbdata:/var/lib/postgresql/data
@@ -56,13 +55,12 @@ services:
     volumes:
       - /var/log/statuswatch:/app/logs
 
-  # Caddy for HTTPS/TLS - PRODUCTION ONLY
   caddy:
     image: caddy:2
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp" # HTTP/3 support
+      - "443:443/udp"
     depends_on:
       web:
         condition: service_healthy
