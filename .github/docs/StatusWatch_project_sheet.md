@@ -1567,11 +1567,16 @@ This process keeps the legacy stack untouched while giving the refactor a realis
 - `app/settings.py` only wires env-specific overrides.
 - Acceptance test: `python backend/manage.py check` succeeds inside the mod API container.
 
-3. **Auth refresh alignment**
+3. **Auth refresh alignment** ✅
 
-- Point `api/token_refresh.py` and related views at `TenantAuthService`.
-- Ensure token blacklist still operates from the public schema.
-- Acceptance test: `pytest backend/api/tests/test_token_refresh.py` (or equivalent) plus a manual `curl` check via the mod stack (`POST /api/auth/token/refresh/`).
+- `MultiTenantTokenRefreshView` now delegates all work to `TenantAuthService.refresh_tokens`, which centralizes the SimpleJWT calls and keeps schema switching logic in one place.
+- The service blacklists/rotates refresh tokens inside the current schema, rolls back broken transactions, and exposes timing/audit hooks; the view records every attempt via `AuditEvent.TOKEN_REFRESH` plus a `PerformanceMonitor` block.
+- Tests executed on Nov 15, 2025:
+  ```bash
+  cd backend
+  pytest tests/test_token_refresh.py tests/test_jwt_rotation.py -q
+  ```
+- Manual verification: `curl -X POST http://acme.localhost:8081/api/auth/token/refresh/ -d '{"refresh":"<token>"}' -H "Content-Type: application/json"` against the mod stack to confirm responses and logging.
 
 4. **Document + rollback plan**
 
