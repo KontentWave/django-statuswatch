@@ -6,6 +6,10 @@ StatusWatch uses a **split settings architecture** to separate environment-agnos
 
 ### Settings Files Structure
 
+backend/modules/core/
+├── settings_registry.py # Central INSTALLED_APPS/middleware registry
+└── urls.py # Shared admin/health/auth/payment route helpers
+
 ```
 backend/app/
 ├── settings.py                    # Router: detects environment and loads appropriate settings
@@ -28,6 +32,8 @@ backend/app/
    - Database structure, password validators
    - Celery, JWT, REST Framework configuration
    - Logging handlers and formatters
+
+   > **Tip:** `modules/core/settings_registry.py` exposes helper functions (e.g., `get_installed_apps()`, `get_middleware()`) so future modules can register additional apps or middleware without editing `settings_base.py`.
 
 3. **`settings_development.py`** - Development overrides:
 
@@ -289,11 +295,7 @@ SENTRY_RELEASE="statuswatch@1.2.3"
 
 ### From Monolithic `settings.py` to Split Settings
 
-1. **Backup your current settings:**
-
-   ```bash
-   cp app/settings.py app/settings_old.py
-   ```
+1. **Checkpoint your current settings in version control** (e.g., commit or stash any local edits).
 
 2. **Set environment variable:**
 

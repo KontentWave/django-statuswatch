@@ -10,6 +10,12 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from modules.core import (
+    get_installed_apps,
+    get_middleware,
+    get_shared_apps,
+    get_tenant_apps,
+)
 
 # -------------------------------------------------------------------
 # Base directories and paths
@@ -41,30 +47,11 @@ PUBLIC_SCHEMA_NAME = "public"
 # Allow internal requests (e.g., from Caddy with Host: web:8000) to use public schema
 SHOW_PUBLIC_IF_NO_TENANT_FOUND = True
 
-SHARED_APPS: tuple[str, ...] = (
-    "django_tenants",  # MUST be first!
-    "django.contrib.contenttypes",
-    "django.contrib.staticfiles",
-    "rest_framework",
-    "corsheaders",  # CORS support
-    "tenants",  # your tenants app (Client/Domain models)
-    "django_celery_beat",  # Celery Beat scheduler (shared across tenants)
-    # NOTE: token_blacklist NOT in SHARED_APPS - we handle it per tenant
-)
+SHARED_APPS: tuple[str, ...] = tuple(get_shared_apps())
+TENANT_APPS: tuple[str, ...] = tuple(get_tenant_apps())
 
-TENANT_APPS: tuple[str, ...] = (
-    "django.contrib.admin",
-    "django.contrib.auth",
-    "django.contrib.sessions",
-    "django.contrib.messages",
-    "rest_framework_simplejwt.token_blacklist",  # JWT blacklist per tenant
-    # your tenant-facing apps:
-    "api",
-    "monitors",
-)
-
-# Final INSTALLED_APPS: shared first, then tenant apps (no duplicates)
-INSTALLED_APPS = list(SHARED_APPS) + [a for a in TENANT_APPS if a not in SHARED_APPS]
+# Final INSTALLED_APPS resolved through the core registry (shared first, deduped)
+INSTALLED_APPS = get_installed_apps()
 
 DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
 
@@ -75,24 +62,8 @@ ROOT_URLCONF = "app.urls_tenant"
 # -------------------------------------------------------------------
 # Middleware
 # -------------------------------------------------------------------
-MIDDLEWARE = [
-    "app.middleware_internal.InternalEndpointMiddleware",  # Must be FIRST - exempts internal endpoints from HTTPS redirect
-    "app.middleware_security_custom.CustomSecurityMiddleware",  # Replaces django.middleware.security.SecurityMiddleware
-    "app.middleware.SecurityHeadersMiddleware",  # Additional security headers
-    "whitenoise.middleware.WhiteNoiseMiddleware",
-    "django_tenants.middleware.main.TenantMainMiddleware",
-    "app.middleware_tenant_logging.TenantRoutingLoggingMiddleware",  # Log tenant routing
-    "app.middleware_logging.RequestIDMiddleware",  # Add unique request ID
-    "app.middleware_logging.RequestLoggingMiddleware",  # Log all requests/responses
-    "corsheaders.middleware.CorsMiddleware",
-    "app.middleware_cors_logging.CorsLoggingMiddleware",  # Log CORS decisions
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
-]
+# Resolved dynamically so modules can register additional middleware entries.
+MIDDLEWARE = list(get_middleware())
 
 # -------------------------------------------------------------------
 # Templates

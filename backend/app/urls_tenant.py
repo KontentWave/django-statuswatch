@@ -1,34 +1,26 @@
-from api.health import health_check, metrics, readiness_check
-from api.multi_tenant_auth import MultiTenantLoginView
-from api.token_refresh import MultiTenantTokenRefreshView
-from api.views import validate_domain_for_tls
-from django.conf import settings
-from django.contrib import admin
 from django.http import HttpResponse
 from django.urls import include, path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenVerifyView
+from modules.core.urls import (
+    admin_urlpatterns,
+    health_urlpatterns,
+    internal_validation_urlpatterns,
+    jwt_token_urlpatterns,
+    multi_tenant_login_urlpatterns,
+    payment_urlpatterns,
+)
+from rest_framework_simplejwt.views import TokenObtainPairView
 
-urlpatterns = [
-    path(settings.ADMIN_URL, admin.site.urls),
-    # Health & Monitoring endpoints (no auth required)
-    path("healthz", health_check, name="healthz"),
-    path("health/", health_check, name="health_check"),
-    path("health/ready/", readiness_check, name="readiness_check"),
-    path("metrics/", metrics, name="metrics"),
-    # Internal: Caddy on-demand TLS domain validation
-    path("api/internal/validate-domain/", validate_domain_for_tls, name="validate_domain_tls"),
-    # Multi-tenant centralized authentication (accessible from tenant subdomains)
-    path("api/auth/login/", MultiTenantLoginView.as_view(), name="multi_tenant_login"),
-    # API endpoints
-    path("api/", include("api.urls")),
-    path("api/pay/", include("payments.urls")),
-    path("api/billing/", include("payments.billing_urls")),
-    path("api/", include("monitors.urls")),
-]
+urlpatterns = (
+    admin_urlpatterns()
+    + health_urlpatterns()
+    + internal_validation_urlpatterns()
+    + multi_tenant_login_urlpatterns()
+    + payment_urlpatterns()
+    + [
+        path("api/", include("api.urls")),
+        path("api/", include("monitors.urls")),
+    ]
+)
 
-urlpatterns += [
-    path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/auth/token/refresh/", MultiTenantTokenRefreshView.as_view(), name="token_refresh"),
-    path("api/auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
-    path("", lambda r: HttpResponse("tenant OK"), name="tenant-home"),
-]
+urlpatterns += jwt_token_urlpatterns(TokenObtainPairView, include_verify=True)
+urlpatterns += [path("", lambda r: HttpResponse("tenant OK"), name="tenant-home")]
