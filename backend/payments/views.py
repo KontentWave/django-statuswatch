@@ -10,6 +10,15 @@ from api.logging_utils import sanitize_log_value
 from api.throttles import BillingRateThrottle
 from django.conf import settings
 from django.core.exceptions import DisallowedHost
+from modules.billing import (
+    BillingCancelResponseDto,
+    BillingCheckoutResponseDto,
+    BillingPortalResponseDto,
+    cancel_active_subscription,
+    create_billing_portal_session,
+    create_subscription_checkout_session,
+    dispatch_billing_webhook_event,
+)
 from rest_framework import status
 from rest_framework.decorators import (
     api_view,
@@ -21,7 +30,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from stripe import _error as stripe_error
-from tenants.models import Client, SubscriptionStatus
+from tenants.models import SubscriptionStatus
 
 logger = logging.getLogger(__name__)
 checkout_logger = logging.getLogger("payments.checkout")
@@ -202,10 +211,8 @@ class BillingCheckoutSessionView(APIView):
                     "reason": "unknown_plan",
                 },
             )
-            return Response(
-                {"detail": f"The plan '{plan}' is not available."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            dto = BillingCheckoutResponseDto(detail=f"The plan '{plan}' is not available.")
+            return Response(dto.to_dict(), status=status.HTTP_400_BAD_REQUEST)
 
         if not price_id:
             billing_logger.error(
@@ -218,9 +225,17 @@ class BillingCheckoutSessionView(APIView):
             )
             raise ConfigurationError("Subscription plan is temporarily unavailable.")
 
-        stripe.api_key = settings.STRIPE_SECRET_KEY
-
         tenant = getattr(request, "tenant", None)
+        if tenant is None:
+            billing_logger.error(
+                "Tenant context missing during checkout",
+                extra={
+                    **log_context_base,
+                    "status": "error",
+                    "reason": "missing_tenant",
+                },
+            )
+            raise ConfigurationError("Tenant context is not available for this request.")
         tenant_schema = getattr(tenant, "schema_name", "public")
         tenant_customer_id = getattr(tenant, "stripe_customer_id", "") or ""
         sanitized_tenant = sanitize_log_value(tenant_schema)
@@ -230,87 +245,36 @@ class BillingCheckoutSessionView(APIView):
 
         success_url = f"{base_frontend_url}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base_frontend_url}/billing/cancel"
-
-        billing_logger.info(
-            f"[STRIPE-CHECKOUT] Creating checkout session with redirect URLs | "
-            f"base={base_frontend_url} success_url={success_url} cancel_url={cancel_url}",
-            extra={
-                "event": "stripe_checkout_urls",
-                "resolution_source": frontend_source,
-                "request_host": request.get_host(),
-                "success_url": success_url,
-                "cancel_url": cancel_url,
-                "tenant_schema": sanitized_tenant,
-            },
-        )
-
         try:
-            customer_origin = "existing"
-            customer_id = tenant_customer_id
-
-            if not customer_id:
-                search_result = stripe.Customer.list(email=request.user.email, limit=1)
-                if search_result and getattr(search_result, "data", None):
-                    customer = search_result.data[0]
-                    customer_id = getattr(customer, "id", "")
-                    customer_origin = "reused"
-                if not customer_id:
-                    full_name = getattr(request.user, "get_full_name", lambda: "")() or (
-                        getattr(request.user, "username", "") or request.user.email
-                    )
-                    customer = stripe.Customer.create(
-                        email=request.user.email,
-                        name=full_name,
-                        metadata={
-                            "tenant_schema": tenant_schema,
-                            "user_id": str(request.user.id),
-                        },
-                    )
-                    customer_id = getattr(customer, "id", "")
-                    customer_origin = "created"
-
-                if customer_id:
-                    tenant.stripe_customer_id = customer_id
-                    tenant.save(update_fields=["stripe_customer_id"])
-                    sanitized_customer = sanitize_log_value(customer_id)
-                    billing_logger.info(
-                        "Synchronized Stripe customer for tenant | tenant=%s customer_id=%s origin=%s",
-                        sanitized_tenant,
-                        sanitized_customer,
-                        customer_origin,
-                        extra={
-                            **log_context_base,
-                            "tenant_schema": sanitized_tenant,
-                            "customer_id": sanitized_customer,
-                            "customer_origin": customer_origin,
-                            "status": "customer_ready",
-                        },
-                    )
-
-            checkout_payload = {
-                "mode": "subscription",
-                "line_items": [{"price": price_id, "quantity": 1}],
-                "customer": customer_id,
-                "metadata": {
-                    "tenant_schema": tenant_schema,
-                    "user_id": str(request.user.id),
-                    "plan": plan,
-                },
-                "success_url": success_url,
-                "cancel_url": cancel_url,
-            }
-
-            if not customer_id:
-                checkout_payload.pop("customer")
-                checkout_payload["customer_creation"] = "always"
-                checkout_payload["customer_email"] = request.user.email
-                customer_origin = "email_only"
-
-            session = stripe.checkout.Session.create(
-                **checkout_payload,
+            checkout_result = create_subscription_checkout_session(
+                stripe_secret_key=settings.STRIPE_SECRET_KEY,
+                tenant=tenant,
+                user=request.user,
+                plan=plan,
+                price_id=price_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                stripe_api=stripe,
             )
 
-            sanitized_session_id = sanitize_log_value(getattr(session, "id", ""))
+            sanitized_customer = sanitize_log_value(checkout_result.customer_id or "")
+            sanitized_session_id = sanitize_log_value(checkout_result.session_id or "")
+
+            if checkout_result.customer_id and checkout_result.customer_id != tenant_customer_id:
+                sync_context = {
+                    **log_context_base,
+                    "tenant_schema": sanitized_tenant,
+                    "customer_id": sanitized_customer,
+                    "customer_origin": checkout_result.customer_origin,
+                    "status": "customer_ready",
+                }
+                billing_logger.info(
+                    "Synchronized Stripe customer for tenant | tenant=%s customer_id=%s origin=%s",
+                    sanitized_tenant,
+                    sanitized_customer,
+                    checkout_result.customer_origin,
+                    extra=sync_context,
+                )
 
             log_context = {
                 **log_context_base,
@@ -318,7 +282,7 @@ class BillingCheckoutSessionView(APIView):
                 "session_id": sanitized_session_id,
                 "checkout_mode": "subscription",
                 "customer_id": sanitized_customer,
-                "customer_origin": customer_origin,
+                "customer_origin": checkout_result.customer_origin,
                 "status": "success",
             }
             billing_logger.info(
@@ -338,7 +302,8 @@ class BillingCheckoutSessionView(APIView):
                 extra=log_context,
             )
 
-            return Response({"url": session.url}, status=status.HTTP_201_CREATED)
+            dto = BillingCheckoutResponseDto(url=checkout_result.url)
+            return Response(dto.to_dict(), status=status.HTTP_201_CREATED)
 
         except stripe_error.CardError as e:
             sanitized_message = sanitize_log_value(
@@ -498,16 +463,12 @@ class BillingPortalSessionView(APIView):
                 "Tenant missing Stripe customer ID for billing portal",
                 extra={**log_context, "status": "error", "reason": "missing_customer"},
             )
-            return Response(
-                {
-                    "detail": (
-                        "Billing portal is not available yet. Please try again shortly or contact support."
-                    )
-                },
-                status=status.HTTP_409_CONFLICT,
+            dto = BillingPortalResponseDto(
+                detail=(
+                    "Billing portal is not available yet. Please try again shortly or contact support."
+                )
             )
-
-        stripe.api_key = settings.STRIPE_SECRET_KEY
+            return Response(dto.to_dict(), status=status.HTTP_409_CONFLICT)
 
         base_frontend_url, frontend_source = _resolve_frontend_base_url(request, tenant)
         return_url = f"{base_frontend_url}/billing"
@@ -547,12 +508,13 @@ class BillingPortalSessionView(APIView):
                     "resolution_source": frontend_source,
                 },
             )
-            session = stripe.billing_portal.Session.create(
-                customer=tenant_customer_id,
+            portal_result = create_billing_portal_session(
+                stripe_secret_key=settings.STRIPE_SECRET_KEY,
+                customer_id=tenant_customer_id,
                 return_url=return_url,
             )
 
-            sanitized_session = sanitize_log_value(getattr(session, "id", ""))
+            sanitized_session = sanitize_log_value(portal_result.session_id or "")
             success_context = {
                 **log_context,
                 "status": "success",
@@ -568,7 +530,8 @@ class BillingPortalSessionView(APIView):
                 success_context["session_id"],
                 extra=success_context,
             )
-            return Response({"url": session.url}, status=status.HTTP_201_CREATED)
+            dto = BillingPortalResponseDto(url=portal_result.url)
+            return Response(dto.to_dict(), status=status.HTTP_201_CREATED)
 
         except stripe_error.InvalidRequestError as e:
             sanitized_message = sanitize_log_value(
@@ -678,129 +641,81 @@ class CancelSubscriptionView(APIView):
                 "Tenant missing Stripe customer ID for cancellation",
                 extra={**log_context, "status": "error", "reason": "missing_customer"},
             )
-            return Response(
-                {
-                    "detail": (
-                        "We could not locate an active subscription for this workspace. "
-                        "Please try again after refreshing the page."
-                    )
-                },
-                status=status.HTTP_409_CONFLICT,
+            dto = BillingCancelResponseDto(
+                detail=(
+                    "We could not locate an active subscription for this workspace. "
+                    "Please try again after refreshing the page."
+                )
             )
+            return Response(dto.to_dict(), status=status.HTTP_409_CONFLICT)
 
-        stripe.api_key = settings.STRIPE_SECRET_KEY
         cancellation_logger.info(
             "Attempting to cancel Stripe subscription",
             extra={**log_context, "status": "start"},
         )
 
         try:
-            subscription_list = stripe.Subscription.list(
-                customer=tenant_customer_id,
-                status="all",
-                limit=5,
+            cancel_result = cancel_active_subscription(
+                stripe_secret_key=settings.STRIPE_SECRET_KEY,
+                tenant=tenant,
+                cancelable_statuses=self.CANCELABLE_STATUSES,
+                stripe_api=stripe,
             )
-        except stripe_error.StripeError as exc:
+        except stripe_error.APIConnectionError as exc:
             sanitized_error = sanitize_log_value(str(exc))
             cancellation_logger.error(
-                "Stripe error while listing subscriptions",
+                "Stripe API connection error while cancelling subscription",
                 extra={**log_context, "status": "error", "error": sanitized_error},
                 exc_info=settings.DEBUG,
             )
             raise PaymentProcessingError(
                 "Unable to contact the payment processor. Please try again shortly."
             ) from exc
+        except stripe_error.InvalidRequestError as exc:
+            sanitized_error = sanitize_log_value(str(exc))
+            cancellation_logger.error(
+                "Stripe invalid request while cancelling subscription",
+                extra={**log_context, "status": "error", "error": sanitized_error},
+                exc_info=settings.DEBUG,
+            )
+            raise PaymentProcessingError() from exc
+        except stripe_error.StripeError as exc:
+            sanitized_error = sanitize_log_value(str(exc))
+            cancellation_logger.error(
+                "Stripe error while cancelling subscription",
+                extra={**log_context, "status": "error", "error": sanitized_error},
+                exc_info=settings.DEBUG,
+            )
+            raise PaymentProcessingError(
+                "Payment processor reported an error while cancelling the subscription."
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             cancellation_logger.error(
-                "Unexpected error while fetching subscriptions",
+                "Unexpected error while cancelling subscription",
                 extra={**log_context, "status": "error", "error": sanitize_log_value(str(exc))},
                 exc_info=settings.DEBUG,
             )
             raise PaymentProcessingError() from exc
 
-        subscription_to_cancel = None
-        for item in getattr(subscription_list, "data", []) or []:
-            status_value = (item or {}).get("status")
-            if status_value in self.CANCELABLE_STATUSES:
-                subscription_to_cancel = item
-                break
+        sanitized_subscription_id = sanitize_log_value(cancel_result.subscription_id or "")
 
-        subscription_id = None
-        if subscription_to_cancel is not None:
-            subscription_id = subscription_to_cancel.get("id")
-            sanitized_subscription_id = sanitize_log_value(subscription_id or "")
+        if cancel_result.subscription_id:
             cancellation_logger.info(
                 "Cancelling Stripe subscription",
                 extra={
                     **log_context,
                     "status": "processing",
                     "subscription_id": sanitized_subscription_id,
-                    "subscription_status": sanitize_log_value(
-                        subscription_to_cancel.get("status", "")
-                    ),
+                    "subscription_status": sanitize_log_value(cancel_result.remote_status or ""),
                 },
             )
-            try:
-                stripe.Subscription.delete(subscription_id)
-            except stripe_error.InvalidRequestError as exc:
-                sanitized_error = sanitize_log_value(str(exc))
-                cancellation_logger.error(
-                    "Stripe invalid request while cancelling subscription",
-                    extra={
-                        **log_context,
-                        "status": "error",
-                        "subscription_id": sanitized_subscription_id,
-                        "error": sanitized_error,
-                    },
-                    exc_info=settings.DEBUG,
-                )
-                raise PaymentProcessingError() from exc
-            except stripe_error.StripeError as exc:
-                sanitized_error = sanitize_log_value(str(exc))
-                cancellation_logger.error(
-                    "Stripe error while cancelling subscription",
-                    extra={
-                        **log_context,
-                        "status": "error",
-                        "subscription_id": sanitized_subscription_id,
-                        "error": sanitized_error,
-                    },
-                    exc_info=settings.DEBUG,
-                )
-                raise PaymentProcessingError(
-                    "Payment processor reported an error while cancelling the subscription."
-                ) from exc
-            except Exception as exc:  # noqa: BLE001
-                cancellation_logger.error(
-                    "Unexpected error while cancelling subscription",
-                    extra={
-                        **log_context,
-                        "status": "error",
-                        "subscription_id": sanitized_subscription_id,
-                        "error": sanitize_log_value(str(exc)),
-                    },
-                    exc_info=settings.DEBUG,
-                )
-                raise PaymentProcessingError() from exc
-        else:
-            cancellation_logger.info(
-                "No cancelable Stripe subscription found",
-                extra={**log_context, "status": "skipped"},
-            )
-
-        previous_status = tenant.subscription_status
-        if previous_status != SubscriptionStatus.FREE:
-            tenant.subscription_status = SubscriptionStatus.FREE
-            tenant.save(update_fields=["subscription_status"])
-
-        sanitized_subscription_id = sanitize_log_value(subscription_id or "")
         subscription_logger.info(
             "Subscription status updated via cancellation API",
             extra={
                 "event": "subscription_update",
                 "event_type": "api.billing.cancel",
                 "tenant_schema": sanitized_schema,
-                "previous_status": previous_status,
+                "previous_status": cancel_result.previous_status,
                 "new_status": SubscriptionStatus.FREE,
                 "subscription_id": sanitized_subscription_id,
                 "customer_id": sanitized_customer,
@@ -814,7 +729,7 @@ class CancelSubscriptionView(APIView):
                 **log_context,
                 "status": "success",
                 "subscription_id": sanitized_subscription_id,
-                "previous_status": sanitize_log_value(previous_status),
+                "previous_status": sanitize_log_value(cancel_result.previous_status),
                 "new_status": SubscriptionStatus.FREE,
             },
         )
@@ -826,13 +741,20 @@ class CancelSubscriptionView(APIView):
             tenant_schema=tenant_schema,
             details={
                 "origin": "api",
-                "previous_status": previous_status,
-                "subscription_id": subscription_id,
+                "previous_status": cancel_result.previous_status,
+                "subscription_id": cancel_result.subscription_id,
                 "customer_id": tenant_customer_id,
             },
         )
 
-        return Response({"plan": SubscriptionStatus.FREE}, status=status.HTTP_200_OK)
+        if not cancel_result.remote_cancelled and cancel_result.subscription_id is None:
+            cancellation_logger.info(
+                "No cancelable Stripe subscription found",
+                extra={**log_context, "status": "skipped"},
+            )
+
+        dto = BillingCancelResponseDto(plan=SubscriptionStatus.FREE)
+        return Response(dto.to_dict(), status=status.HTTP_200_OK)
 
 
 def _resolve_frontend_base_url(request, tenant=None) -> tuple[str, str]:
@@ -1105,13 +1027,17 @@ class StripeWebhookView(APIView):
     def _handle_event(self, event: dict):
         event_type = event.get("type", "unknown")
         event_id = event.get("id")
-        tenant_schema = self._extract_tenant_schema(event)
-        sanitized_schema = sanitize_log_value(tenant_schema or "")
         session_id = event.get("data", {}).get("object", {}).get("id")
-        sanitized_session_id = sanitize_log_value(session_id or "")
+        metadata = event.get("data", {}).get("object", {}).get("metadata", {}) or {}
+        tenant_schema = metadata.get("tenant_schema") or metadata.get("tenant")
+        customer_id = event.get("data", {}).get("object", {}).get("customer")
+        if not isinstance(customer_id, str) or not customer_id.strip():
+            customer_id = None
+
         sanitized_event_id = sanitize_log_value(event_id or "")
-        customer_id = self._extract_customer_id(event)
+        sanitized_session_id = sanitize_log_value(session_id or "")
         sanitized_customer = sanitize_log_value(customer_id or "")
+        sanitized_schema = sanitize_log_value(tenant_schema or "")
 
         subscription_logger.info(
             "Processing Stripe webhook event",
@@ -1126,15 +1052,21 @@ class StripeWebhookView(APIView):
             },
         )
 
-        if tenant_schema is None:
+        result = dispatch_billing_webhook_event(event)
+
+        sanitized_event_id = sanitize_log_value(result.event_id or event_id or "")
+        sanitized_session_id = sanitize_log_value(result.session_id or session_id or "")
+        sanitized_customer = sanitize_log_value(result.customer_id or customer_id or "")
+        sanitized_schema = sanitize_log_value(result.tenant_schema or tenant_schema or "")
+
+        if result.status == "missing_metadata":
             webhook_logger.warning(
                 "Stripe webhook missing tenant metadata",
                 extra={"event": "stripe_webhook", "status": "ignored", "event_type": event_type},
             )
             return Response(status=status.HTTP_202_ACCEPTED)
 
-        tenant = Client.objects.filter(schema_name=tenant_schema).first()
-        if tenant is None:
+        if result.status == "tenant_not_found":
             webhook_logger.warning(
                 "Stripe webhook tenant not found",
                 extra={
@@ -1146,110 +1078,29 @@ class StripeWebhookView(APIView):
             )
             return Response(status=status.HTTP_202_ACCEPTED)
 
-        if event_type in {"checkout.session.completed", "invoice.paid"}:
-            return self._update_subscription(
-                tenant,
-                SubscriptionStatus.PRO,
-                event_type,
-                event_id=event_id,
-                session_id=session_id,
-                customer_id=customer_id,
-            )
-
-        if event_type == "customer.subscription.deleted":
-            cancellation_logger.info(
-                "Processing Stripe subscription cancellation event",
+        if result.status == "ignored":
+            webhook_logger.info(
+                "Stripe webhook event ignored",
                 extra={
-                    "event": "billing_cancellation",
-                    "status": "received",
-                    "tenant_schema": sanitized_schema,
-                    "event_id": sanitized_event_id,
-                    "subscription_id": sanitize_log_value(
-                        event.get("data", {}).get("object", {}).get("id", "")
-                    ),
-                    "customer_id": sanitized_customer,
-                },
-            )
-            response = self._update_subscription(
-                tenant,
-                SubscriptionStatus.FREE,
-                event_type,
-                event_id=event_id,
-                session_id=session_id,
-                customer_id=customer_id,
-            )
-            log_audit_event(
-                event=AuditEvent.SUBSCRIPTION_CANCELLED,
-                tenant_schema=tenant.schema_name,
-                user_id=None,
-                details={
-                    "origin": "webhook",
+                    "event": "stripe_webhook",
+                    "status": "ignored",
                     "event_type": event_type,
-                    "event_id": event_id,
-                    "customer_id": customer_id,
-                },
-            )
-            cancellation_logger.info(
-                "Stripe subscription cancelled via webhook",
-                extra={
-                    "event": "billing_cancellation",
-                    "status": "success",
                     "tenant_schema": sanitized_schema,
-                    "event_id": sanitized_event_id,
-                    "customer_id": sanitized_customer,
                 },
             )
-            return response
+            return Response(status=status.HTTP_202_ACCEPTED)
 
-        webhook_logger.info(
-            "Stripe webhook event ignored",
-            extra={
-                "event": "stripe_webhook",
-                "status": "ignored",
-                "event_type": event_type,
-                "tenant_schema": sanitized_schema,
-            },
-        )
-        return Response(status=status.HTTP_202_ACCEPTED)
-
-    @staticmethod
-    def _extract_tenant_schema(event: dict) -> str | None:
-        data_object = event.get("data", {}).get("object", {}) or {}
-        metadata = data_object.get("metadata") or {}
-        tenant_schema = metadata.get("tenant_schema") or metadata.get("tenant")
-        return tenant_schema
-
-    @staticmethod
-    def _extract_customer_id(event: dict) -> str | None:
-        data_object = event.get("data", {}).get("object", {}) or {}
-        customer = data_object.get("customer")
-        if isinstance(customer, str) and customer.strip():
-            return customer
-        return None
-
-    def _update_subscription(
-        self,
-        tenant: Client,
-        new_status: SubscriptionStatus,
-        event_type: str,
-        event_id: str | None = None,
-        session_id: str | None = None,
-        customer_id: str | None = None,
-    ) -> Response:
-        previous_status = tenant.subscription_status
-        tenant.subscription_status = new_status
-
-        updated_fields = ["subscription_status"]
-        sanitized_customer = sanitize_log_value(customer_id or "")
-        if customer_id and tenant.stripe_customer_id != customer_id:
-            tenant.stripe_customer_id = customer_id
-            updated_fields.append("stripe_customer_id")
-
-        tenant.save(update_fields=updated_fields)
-
-        sanitized_event_id = sanitize_log_value(event_id or "")
-        sanitized_session_id = sanitize_log_value(session_id or "")
-        sanitized_schema = sanitize_log_value(tenant.schema_name)
+        if not result.handled:
+            webhook_logger.error(
+                "Stripe webhook processing failed",
+                extra={
+                    "event": "stripe_webhook",
+                    "status": result.status,
+                    "event_type": event_type,
+                    "tenant_schema": sanitized_schema,
+                },
+            )
+            return Response(status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         subscription_logger.info(
             "Subscription status updated",
@@ -1259,8 +1110,8 @@ class StripeWebhookView(APIView):
                 "event_id": sanitized_event_id,
                 "session_id": sanitized_session_id,
                 "tenant_schema": sanitized_schema,
-                "previous_status": previous_status,
-                "new_status": new_status,
+                "previous_status": result.previous_status,
+                "new_status": result.new_status,
                 "customer_id": sanitized_customer,
             },
         )
@@ -1272,8 +1123,8 @@ class StripeWebhookView(APIView):
                 "status": "updated",
                 "event_type": event_type,
                 "tenant_schema": sanitized_schema,
-                "previous_status": previous_status,
-                "new_status": new_status,
+                "previous_status": result.previous_status,
+                "new_status": result.new_status,
                 "event_id": sanitized_event_id,
                 "session_id": sanitized_session_id,
                 "customer_id": sanitized_customer,
@@ -1285,22 +1136,48 @@ class StripeWebhookView(APIView):
             "event_id": sanitized_event_id,
             "session_id": sanitized_session_id,
             "tenant_schema": sanitized_schema,
-            "previous_status": sanitize_log_value(previous_status),
-            "new_status": sanitize_log_value(new_status),
+            "previous_status": sanitize_log_value(result.previous_status),
+            "new_status": sanitize_log_value(result.new_status),
             "customer_id": sanitized_customer,
         }
         subscription_state_logger.info(json.dumps(state_payload, separators=(",", ":")))
 
-        if new_status == SubscriptionStatus.PRO and previous_status != SubscriptionStatus.PRO:
+        if (
+            result.new_status == SubscriptionStatus.PRO
+            and result.previous_status != SubscriptionStatus.PRO
+        ):
             log_audit_event(
                 event=AuditEvent.SUBSCRIPTION_CREATED,
-                tenant_schema=tenant.schema_name,
+                tenant_schema=result.tenant_schema or tenant_schema or "",
                 user_id=None,
                 details={
                     "origin": "webhook",
                     "event_type": event_type,
-                    "event_id": event_id,
-                    "customer_id": customer_id,
+                    "event_id": result.event_id,
+                    "customer_id": result.customer_id,
+                },
+            )
+
+        if event_type == "customer.subscription.deleted":
+            log_audit_event(
+                event=AuditEvent.SUBSCRIPTION_CANCELLED,
+                tenant_schema=result.tenant_schema or tenant_schema or "",
+                user_id=None,
+                details={
+                    "origin": "webhook",
+                    "event_type": event_type,
+                    "event_id": result.event_id,
+                    "customer_id": result.customer_id,
+                },
+            )
+            cancellation_logger.info(
+                "Stripe subscription cancelled via webhook",
+                extra={
+                    "event": "billing_cancellation",
+                    "status": "success",
+                    "tenant_schema": sanitized_schema,
+                    "event_id": sanitized_event_id,
+                    "customer_id": sanitized_customer,
                 },
             )
 

@@ -116,9 +116,14 @@ function createFileLogger(name: string, filePath: string): Logger {
   // Files are only written in Node.js test environment
   return {
     async log(event: string, data?: unknown): Promise<void> {
-      // Skip file operations in browser (Node.js modules not available)
-      if (typeof window !== "undefined") {
-        // In browser: just log to console (file logging only in tests)
+      const isTestEnv =
+        typeof process !== "undefined" &&
+        (process.env?.VITEST === "true" || process.env?.NODE_ENV === "test");
+
+      const runningInBrowser = typeof window !== "undefined" && !isTestEnv;
+
+      if (runningInBrowser) {
+        // In browser: avoid touching the filesystem
         return;
       }
 

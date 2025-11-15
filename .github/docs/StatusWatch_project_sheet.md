@@ -1582,3 +1582,57 @@ This process keeps the legacy stack untouched while giving the refactor a realis
 
 - Update this sheet with the migration steps and rollback command (`git revert <commit>` + `docker compose -f docker-compose.mod.yml down -v`).
 - Acceptance test: documentation PR reviewed; `StatusWatch_project_sheet.md` reflects the above steps before merging `refactor/mod-monolith`.
+
+#### Milestone M2 – Monitoring & Billing module migration _(in flight)_
+
+**Goal:** move monitoring (`backend/monitors`) and billing (`backend/payments`) functionality into dedicated `modules/` packages with shared DTO/serializer contracts, while keeping the SPA/API contracts and Celery schedules stable. Milestone completes when the modular stack passes all monitoring+billing acceptance tests and the new DTO layer is consumed on both backend and frontend.
+
+1. **Shared DTO + serializer layer**
+
+- Create `backend/modules/monitoring/dto.py` and `backend/modules/billing/dto.py` with dataclasses mirroring `EndpointDto` (`frontend/src/lib/endpoint-client.ts`) and the billing response interfaces (`frontend/src/lib/billing-client.ts`).
+- Wrap existing DRF serializers (`backend/monitors/serializers.py` and future billing serializers) so both legacy apps and new modules use identical validation logic.
+- Add serializer-focused unit tests plus mypy coverage to guarantee DTO parity before relocating any views.
+
+2. **Monitoring module extraction**
+
+- Relocate `Endpoint` model + Celery orchestration into `backend/modules/monitoring/{models,tasks,scheduler}.py`, leaving thin wrappers inside `backend/monitors/` that simply import and delegate (keeps `monitors.tasks.schedule_endpoint_checks` import path alive until cutover).
+- Encapsulate `_is_endpoint_due`, tenant iteration, and logging/audit hooks inside a scheduler service; expose pure functions to simplify unit tests (mock `Client` + `Endpoint`).
+- Update `CELERY_BEAT_SCHEDULE` only after wrappers land and tests prove the module path works. Target command set:
+  ```bash
+  pytest backend/tests/test_endpoints_api.py backend/tests/test_scheduler.py backend/tests/test_ping_tasks.py -q
+  pytest backend/tests/test_monitoring_scheduler_service.py -q  # new deterministic tests
+  ```
+- Re-run `celery -A app beat -l info` inside the mod stack to verify tasks still register under `monitors.schedule_endpoint_checks` before changing to `modules.monitoring.tasks.schedule_endpoint_checks`.
+- Added regression tests:
+
+  - `backend/tests/test_monitors_tasks_module.py` ensures `monitors.tasks` keeps exposing `requests` and `_is_endpoint_due` for legacy callers.
+  - `backend/tests/test_celery_tasks.py` asserts `monitors.tasks.schedule_endpoint_checks` stays registered with the Celery app, protecting the beat schedule during refactors.
+  - Recommended smoke suite (documented in `README.md`):
+
+    ```bash
+    cd backend
+    pytest tests/test_monitors_tasks_module.py tests/test_ping_tasks.py tests/test_celery_tasks.py
+    ```
+
+    Run this whenever monitoring code moves between `monitors/` and `modules/monitoring/` to guarantee parity.
+
+3. **Billing module extraction**
+
+- Move the bulk of `backend/payments/views.py` into service modules (e.g., `modules/billing/checkout.py`, `portal.py`, `cancellation.py`, `webhooks.py`). Export request/response DTOs so DRF views simply deserialize → call service → serialize.
+- Keep routing centralized via `modules/core/urls.py` so `/api/pay/` and `/api/billing/` continue to work in both public and tenant stacks; add module-level tests for `_resolve_frontend_base_url` and Stripe client wrappers.
+- Acceptance commands (run against modular compose stack):
+  ```bash
+  pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_webhooks.py backend/tests/test_billing_cancellation.py -q
+  ```
+- Manual smoke: call `POST /api/billing/create-checkout-session/`, `create-portal-session/`, `cancel/` via curl against `acme.localhost:8081` to confirm audit logging still flows (`logs/payments*.log`).
+
+4. **Frontend alignment & regression tests**
+
+- Introduce `frontend/src/types/api.ts` (or similar) that re-exports `EndpointDto`, billing responses, and any future monitoring/billing DTOs. Update `frontend/src/components/EndpointTable.tsx`, `Dashboard.tsx`, and all billing pages/tests to import from the shared type barrel to decouple UI from client internals.
+- Keep Vitest suites green (`frontend/src/pages/__tests__/DashboardPage.test.tsx`, `BillingPage.test.tsx`, `BillingSuccessPage.test.tsx`, `BillingCancelPage.test.tsx`). Add a new contract test that asserts the billing client throws when `detail`/`error` fields change shape (guards against backend drift).
+
+5. **Done criteria & rollback**
+
+- ✅ All tests above pass against the modular compose stack; ✅ Celery beat logs show `Endpoint scheduler run completed` coming from the new module path; ✅ Stripe smoke tests succeed using test keys.
+- Docs updated: this sheet + new ADR outlining DTO strategy and module boundaries.
+- Rollback: revert the module commits and redeploy the previous `monitors`/`payments` apps (wrappers ensure import parity, so reverting is a standard `git revert` plus `docker compose -f docker-compose.mod.yml down -v`).

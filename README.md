@@ -212,6 +212,14 @@ python manage.py migrate_schemas --shared  # Public schema
 python manage.py migrate_schemas           # All tenant schemas
 ```
 
+**Monitoring smoke check:**
+
+```bash
+pytest tests/test_monitors_tasks_module.py tests/test_ping_tasks.py
+```
+
+Run this focused command whenever you touch `monitors.tasks` or the Celery monitoring pipeline to quickly ensure the re-export contract and ping workflow still pass.
+
 ### Frontend
 
 ```bash

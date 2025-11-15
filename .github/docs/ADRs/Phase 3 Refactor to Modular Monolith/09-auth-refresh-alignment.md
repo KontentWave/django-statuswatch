@@ -23,10 +23,12 @@ Milestone M1 of the modular monolith refactor requires the auth refresh flow to 
 ## Considered Options
 
 ### Option A – Keep per-view logic (Rejected)
+
 - Patch the existing view with small tweaks (extra logging, schema guards).
 - **Cons:** logic stays fragmented; difficult to adopt in other endpoints; no obvious seam for future services.
 
 ### Option B – Delegate to `TenantAuthService` (Selected ✅)
+
 - Move refresh/rotation/blacklisting into a dedicated service function, exposing a typed result for the view.
 - View becomes a thin adapter adding audit + performance hooks and shaping the HTTP response.
 - **Pros:** shared infrastructure, easier to test, respects module boundaries, central place to add throttling later.
@@ -54,6 +56,16 @@ curl -X POST http://acme.localhost:8081/api/auth/token/refresh/ \
 ```
 
 All cases return the existing payload contract (`{"access": ..., "refresh": ...}` when rotation is enabled) and produce audit entries.
+
+Additional regression guardrails (Nov 15, 20:42 CET) ensured the refreshed auth flow did not break adjacent monitoring/billing endpoints while we prepare DTO extraction:
+
+```bash
+cd backend
+pytest tests/test_endpoints_api.py tests/test_scheduler.py tests/test_ping_tasks.py -q
+pytest tests/test_billing_checkout.py tests/test_billing_webhooks.py tests/test_billing_cancellation.py -q
+```
+
+Both suites pass (skipping the long-running Stripe live tests as expected), confirming the modular auth changes remain isolated.
 
 ## Consequences
 

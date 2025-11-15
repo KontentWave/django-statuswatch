@@ -14,8 +14,8 @@ import {
   createEndpoint,
   deleteEndpoint,
   listEndpoints,
-  type CreateEndpointRequest,
 } from "../endpoint-client";
+import type { CreateEndpointRequest } from "@/types/api";
 
 vi.mock("../api", () => createApiDouble());
 
