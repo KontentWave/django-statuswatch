@@ -1626,10 +1626,20 @@ This process keeps the legacy stack untouched while giving the refactor a realis
   ```
 - Manual smoke: call `POST /api/billing/create-checkout-session/`, `create-portal-session/`, `cancel/` via curl against `acme.localhost:8081` to confirm audit logging still flows (`logs/payments*.log`).
 
-4. **Frontend alignment & regression tests**
+4. **Frontend alignment & regression tests** ✅
 
-- Introduce `frontend/src/types/api.ts` (or similar) that re-exports `EndpointDto`, billing responses, and any future monitoring/billing DTOs. Update `frontend/src/components/EndpointTable.tsx`, `Dashboard.tsx`, and all billing pages/tests to import from the shared type barrel to decouple UI from client internals.
-- Keep Vitest suites green (`frontend/src/pages/__tests__/DashboardPage.test.tsx`, `BillingPage.test.tsx`, `BillingSuccessPage.test.tsx`, `BillingCancelPage.test.tsx`). Add a new contract test that asserts the billing client throws when `detail`/`error` fields change shape (guards against backend drift).
+- `frontend/src/types/api.ts` now re-exports every monitoring/billing DTO plus shared auth shapes (`SubscriptionPlan`, `CurrentUserResponse`). Billing pages (`Billing.tsx`, `BillingSuccess.tsx`, `BillingCancel.tsx`), the subscription store, and `frontend/src/lib/api.ts` consume these barrel exports so React surfaces no longer import types straight from `@/lib/billing-client`.
+- Confirmed no duplicate DTO definitions linger in billing/subscription loggers or stores; only the client module owns response contracts.
+- Targeted Vitest run covered the full billing suite after the refactor:
+
+  ```bash
+  cd frontend
+  npm run test -- Billing
+  ```
+
+  Output: 4 files, 16 tests passing (`BillingPage`, `BillingSuccessPage`, `BillingCancelPage`, and `lib/billing-client` contract specs) in ~4.7s.
+
+- Dashboard/endpoint surfaces already consume the same barrel for monitoring DTOs, so both billing and monitoring React entry points are decoupled from client implementations.
 
 5. **Done criteria & rollback**
 

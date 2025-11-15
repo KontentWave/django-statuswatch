@@ -4,6 +4,7 @@ import axios, {
   type AxiosRequestConfig,
   type AxiosResponse,
 } from "axios";
+import type { CurrentUserResponse } from "@/types/api";
 import { API_BASE, apiUrl } from "./env";
 import {
   clearAuthTokens,
@@ -184,18 +185,6 @@ export async function login(username: string, password: string) {
   const d = await r.json();
   if (!r.ok) throw new Error(d.detail || "Login failed");
   return d.access as string;
-}
-
-export interface CurrentUserResponse {
-  id: number;
-  username: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  is_staff: boolean;
-  date_joined: string;
-  groups: string[];
-  plan: "free" | "pro" | "canceled";
 }
 
 export async function fetchCurrentUser(): Promise<CurrentUserResponse> {
