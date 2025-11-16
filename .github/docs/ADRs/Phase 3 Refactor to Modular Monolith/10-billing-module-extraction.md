@@ -39,6 +39,7 @@ Milestone M2 of the modular monolith refactor moves payment flows out of the leg
 
 - Unit tests: `backend/tests/test_modules_billing_services.py` covers payload construction, tenant synchronization, cancellation results, and webhook updates.
 - Regression tests: reuse the existing billing suites against the modular stack. Added `tests/test_monitors_tasks_module.py` + `tests/test_celery_tasks.py` so legacy module paths and Celery beat registration stay intact while billing code moves. `tests/test_billing_cancellation.py::test_cancel_subscription_surfaces_stripe_errors` now locks the customer-facing “Unable to contact the payment processor…” detail to prevent further regressions during service refactors.
+- Frontend contract alignment: `frontend/src/types/api.ts` re-exports every billing DTO plus `SubscriptionPlan`/`CurrentUserResponse`, and billing pages/stores import from that barrel instead of reaching into `@/lib/billing-client`. Vitest’s Billing suite guards the shape parity and now runs as part of the milestone checklist.
 
 ```bash
 cd backend
@@ -49,3 +50,8 @@ pytest tests/test_modules_billing_services.py \
 ```
 
 All tests must pass on both the legacy stack and the `docker-compose.mod.yml` stack before merging.
+
+```bash
+cd frontend
+npm run test -- Billing
+```

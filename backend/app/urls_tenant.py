@@ -18,7 +18,8 @@ urlpatterns = (
     + payment_urlpatterns()
     + [
         path("api/", include("api.urls")),
-        path("api/", include("monitors.urls")),
+        # Prefer the modular monitoring router but retain shim for legacy callers
+        path("api/", include("modules.monitoring.urls")),
     ]
 )
 

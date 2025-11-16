@@ -1,21 +1,14 @@
-"""Monitoring module primitives shared across legacy Django apps and new services."""
+"""Monitoring package.
 
-from .dto import (
-    CreateEndpointPayload,
-    DeleteEndpointResult,
-    EndpointDto,
-    EndpointListResponseDto,
-    build_endpoint_serializer,
-    build_list_dto,
-    endpoint_to_dto,
-)
+Submodules expose DTOs (``modules.monitoring.dto``), ORM models (``modules.monitoring.models``),
+Celery helpers (``modules.monitoring.tasks``), and scheduler services
+(``modules.monitoring.scheduler``). Import concretely from those modules to avoid circular
+dependencies with legacy Django apps.
+"""
 
 __all__ = [
-    "CreateEndpointPayload",
-    "DeleteEndpointResult",
-    "EndpointDto",
-    "EndpointListResponseDto",
-    "build_endpoint_serializer",
-    "build_list_dto",
-    "endpoint_to_dto",
+    "dto",
+    "models",
+    "scheduler",
+    "tasks",
 ]

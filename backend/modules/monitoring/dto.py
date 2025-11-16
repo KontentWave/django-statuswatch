@@ -9,8 +9,9 @@ from typing import Any
 from uuid import UUID
 
 from django.utils import timezone
-from monitors.models import Endpoint
-from monitors.serializers import EndpointSerializer
+
+from .models import Endpoint
+from .serializers import EndpointSerializer
 
 DateTimeLike = datetime | None
 

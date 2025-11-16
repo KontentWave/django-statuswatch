@@ -12,6 +12,8 @@ from django.urls import include, path
 from django.views import View
 from rest_framework_simplejwt.views import TokenVerifyView
 
+from modules.billing.urls import billing_urlpatterns, pay_urlpatterns
+
 
 def admin_urlpatterns():
     return [path(settings.ADMIN_URL, admin.site.urls)]
@@ -48,8 +50,8 @@ def multi_tenant_login_urlpatterns():
 
 def payment_urlpatterns():
     return [
-        path("api/pay/", include("payments.urls")),
-        path("api/billing/", include("payments.billing_urls")),
+        path("api/pay/", include((pay_urlpatterns, "payments"))),
+        path("api/billing/", include((billing_urlpatterns, "billing"))),
     ]
 
 

@@ -1596,6 +1596,9 @@ This process keeps the legacy stack untouched while giving the refactor a realis
 2. **Monitoring module extraction**
 
 - Relocate `Endpoint` model + Celery orchestration into `backend/modules/monitoring/{models,tasks,scheduler}.py`, leaving thin wrappers inside `backend/monitors/` that simply import and delegate (keeps `monitors.tasks.schedule_endpoint_checks` import path alive until cutover).
+- ✅ `Endpoint` model now lives in `modules/monitoring/models.py`, and `monitors/models.py` is a shim that re-exports it so migrations + legacy imports stay untouched.
+- ✅ DRF serializer + view logic now sit in `modules/monitoring/serializers.py` and `modules/monitoring/service.py`; the legacy `monitors/serializers.py` + `monitors/views.py` files just re-export and delegate.
+- ✅ `monitors.views.ping_endpoint` re-exports the Celery task so existing monkeypatches (`monitors.views.ping_endpoint.delay`) keep functioning during the migration.
 - Encapsulate `_is_endpoint_due`, tenant iteration, and logging/audit hooks inside a scheduler service; expose pure functions to simplify unit tests (mock `Client` + `Endpoint`).
 - Update `CELERY_BEAT_SCHEDULE` only after wrappers land and tests prove the module path works. Target command set:
   ```bash
@@ -1625,6 +1628,9 @@ This process keeps the legacy stack untouched while giving the refactor a realis
   pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_webhooks.py backend/tests/test_billing_cancellation.py -q
   ```
 - Manual smoke: call `POST /api/billing/create-checkout-session/`, `create-portal-session/`, `cancel/` via curl against `acme.localhost:8081` to confirm audit logging still flows (`logs/payments*.log`).
+- ✅ `modules/billing/views.py` now owns Stripe config/checkout/portal/cancel/webhook views plus `_resolve_frontend_base_url`; legacy `payments/views.py` re-exports them to keep import paths stable.
+- ✅ `modules/billing/urls.py` exposes `pay_urlpatterns` and `billing_urlpatterns`; `payments/urls.py` + `payments/billing_urls.py` simply re-export those lists while `modules.core.urls.payment_urlpatterns()` includes the module routes directly.
+- ✅ Added router smoke in tenant stack (`python -m pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_cancellation.py backend/tests/test_billing_webhooks.py -q`) after the move; all tests passed on Nov 16, 2025.
 
 4. **Frontend alignment & regression tests** ✅
 
