@@ -1589,22 +1589,23 @@ This process keeps the legacy stack untouched while giving the refactor a realis
 
 1. **Shared DTO + serializer layer**
 
-- Create `backend/modules/monitoring/dto.py` and `backend/modules/billing/dto.py` with dataclasses mirroring `EndpointDto` (`frontend/src/lib/endpoint-client.ts`) and the billing response interfaces (`frontend/src/lib/billing-client.ts`).
-- Wrap existing DRF serializers (`backend/monitors/serializers.py` and future billing serializers) so both legacy apps and new modules use identical validation logic.
-- Add serializer-focused unit tests plus mypy coverage to guarantee DTO parity before relocating any views.
+- [x] Create `backend/modules/monitoring/dto.py` and `backend/modules/billing/dto.py` with dataclasses mirroring `EndpointDto` (`frontend/src/lib/endpoint-client.ts`) and the billing response interfaces (`frontend/src/lib/billing-client.ts`).
+- [x] Wrap existing DRF serializers (`backend/monitors/serializers.py` and future billing serializers) so both legacy apps and new modules use identical validation logic.
+- [x] Add serializer-focused unit tests plus mypy coverage to guarantee DTO parity before relocating any views.
 
 2. **Monitoring module extraction**
 
-- Relocate `Endpoint` model + Celery orchestration into `backend/modules/monitoring/{models,tasks,scheduler}.py`, leaving thin wrappers inside `backend/monitors/` that simply import and delegate (keeps `monitors.tasks.schedule_endpoint_checks` import path alive until cutover).
-- ✅ `Endpoint` model now lives in `modules/monitoring/models.py`, and `monitors/models.py` is a shim that re-exports it so migrations + legacy imports stay untouched.
-- ✅ DRF serializer + view logic now sit in `modules/monitoring/serializers.py` and `modules/monitoring/service.py`; the legacy `monitors/serializers.py` + `monitors/views.py` files just re-export and delegate.
-- ✅ `monitors.views.ping_endpoint` re-exports the Celery task so existing monkeypatches (`monitors.views.ping_endpoint.delay`) keep functioning during the migration.
-- Encapsulate `_is_endpoint_due`, tenant iteration, and logging/audit hooks inside a scheduler service; expose pure functions to simplify unit tests (mock `Client` + `Endpoint`).
-- Update `CELERY_BEAT_SCHEDULE` only after wrappers land and tests prove the module path works. Target command set:
-  ```bash
-  pytest backend/tests/test_endpoints_api.py backend/tests/test_scheduler.py backend/tests/test_ping_tasks.py -q
-  pytest backend/tests/test_monitoring_scheduler_service.py -q  # new deterministic tests
-  ```
+- [x] Relocate `Endpoint` model + Celery orchestration into `backend/modules/monitoring/{models,tasks,scheduler}.py`, leaving thin wrappers inside `backend/monitors/` that simply import and delegate (keeps `monitors.tasks.schedule_endpoint_checks` import path alive until cutover).
+- [x] DRF serializer + view logic now sit in `modules/monitoring/serializers.py` and `modules/monitoring/service.py`; the legacy `monitors/serializers.py` + `monitors/views.py` files just re-export and delegate.
+- [x] `monitors.views.ping_endpoint` re-exports the Celery task so existing monkeypatches (`monitors.views.ping_endpoint.delay`) keep functioning during the migration.
+- [x] Encapsulate `_is_endpoint_due`, tenant iteration, and logging/audit hooks inside a scheduler service; expose pure functions to simplify unit tests (mock `Client` + `Endpoint`).
+- [ ] Update `CELERY_BEAT_SCHEDULE` only after wrappers land and tests prove the module path works. Target command set:
+
+```bash
+pytest backend/tests/test_endpoints_api.py backend/tests/test_scheduler.py backend/tests/test_ping_tasks.py -q
+pytest backend/tests/test_monitoring_scheduler_service.py -q  # new deterministic tests
+```
+
 - Re-run `celery -A app beat -l info` inside the mod stack to verify tasks still register under `monitors.schedule_endpoint_checks` before changing to `modules.monitoring.tasks.schedule_endpoint_checks`.
 - Added regression tests:
 
@@ -1621,16 +1622,17 @@ This process keeps the legacy stack untouched while giving the refactor a realis
 
 3. **Billing module extraction**
 
-- Move the bulk of `backend/payments/views.py` into service modules (e.g., `modules/billing/checkout.py`, `portal.py`, `cancellation.py`, `webhooks.py`). Export request/response DTOs so DRF views simply deserialize → call service → serialize.
-- Keep routing centralized via `modules/core/urls.py` so `/api/pay/` and `/api/billing/` continue to work in both public and tenant stacks; add module-level tests for `_resolve_frontend_base_url` and Stripe client wrappers.
-- Acceptance commands (run against modular compose stack):
-  ```bash
-  pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_webhooks.py backend/tests/test_billing_cancellation.py -q
-  ```
-- Manual smoke: call `POST /api/billing/create-checkout-session/`, `create-portal-session/`, `cancel/` via curl against `acme.localhost:8081` to confirm audit logging still flows (`logs/payments*.log`).
-- ✅ `modules/billing/views.py` now owns Stripe config/checkout/portal/cancel/webhook views plus `_resolve_frontend_base_url`; legacy `payments/views.py` re-exports them to keep import paths stable.
-- ✅ `modules/billing/urls.py` exposes `pay_urlpatterns` and `billing_urlpatterns`; `payments/urls.py` + `payments/billing_urls.py` simply re-export those lists while `modules.core.urls.payment_urlpatterns()` includes the module routes directly.
-- ✅ Added router smoke in tenant stack (`python -m pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_cancellation.py backend/tests/test_billing_webhooks.py -q`) after the move; all tests passed on Nov 16, 2025.
+- [x] Consolidate Stripe config, checkout, portal, cancellation, and webhook logic inside `modules/billing/views.py` (canonical implementation) while `payments/views.py` re-exports the module API plus audit helpers for legacy patches.
+- [x] Keep routing centralized via `modules/core/urls.py` so `/api/pay/` and `/api/billing/` continue to work in both public and tenant stacks; `payments/urls.py` + `payments/billing_urls.py` now proxy `modules/billing/urls.py`.
+- [x] Add `_resolve_frontend_base_url` coverage + Stripe client wrappers in the module tests.
+- [x] Acceptance commands (run against modular compose stack):
+
+```bash
+pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_webhooks.py backend/tests/test_billing_cancellation.py -q
+```
+
+- [x] Manual smoke: call `POST /api/billing/create-checkout-session/`, `create-portal-session/`, `cancel/` via curl against `acme.localhost:8081` to confirm audit logging still flows (`logs/payments*.log`).
+- [x] Router smoke in tenant stack (`python -m pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_cancellation.py backend/tests/test_billing_webhooks.py -q`) executed on Nov 16, 2025.
 
 4. **Frontend alignment & regression tests** ✅
 
@@ -1649,6 +1651,17 @@ This process keeps the legacy stack untouched while giving the refactor a realis
 
 5. **Done criteria & rollback**
 
-- ✅ All tests above pass against the modular compose stack; ✅ Celery beat logs show `Endpoint scheduler run completed` coming from the new module path; ✅ Stripe smoke tests succeed using test keys.
-- Docs updated: this sheet + new ADR outlining DTO strategy and module boundaries.
-- Rollback: revert the module commits and redeploy the previous `monitors`/`payments` apps (wrappers ensure import parity, so reverting is a standard `git revert` plus `docker compose -f docker-compose.mod.yml down -v`).
+- [x] All tests above pass against the modular compose stack; Stripe smoke tests succeed using test keys.
+  - [x] Celery beat logs show `Endpoint scheduler run completed` coming from the new module path (validated Nov 16, 2025 @ 18:24 UTC after manual trigger via `monitors.tasks.schedule_endpoint_checks.delay()` and observing `mod_beat` + `mod_worker` logs).
+- [x] Docs updated: this sheet + new ADR outlining DTO strategy and module boundaries.
+- [x] Rollback: revert the module commits and redeploy the previous `monitors`/`payments` apps (wrappers ensure import parity, so reverting is a standard `git revert` plus `docker compose -f docker-compose.mod.yml down -v`).
+
+#### Celery smoke verification checklist _(new)_
+
+Run these steps in the modular stack whenever monitoring code moves or before declaring M2 complete:
+
+1. `docker compose -f compose.yaml -f docker-compose.mod.yml up -d mod_api mod_worker mod_beat`
+2. Tail beat logs: `docker compose -f compose.yaml -f docker-compose.mod.yml logs --tail 50 mod_beat`
+3. Tail worker logs: `docker compose -f compose.yaml -f docker-compose.mod.yml logs --tail 50 mod_worker`
+4. Trigger manual tick (optional): `docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py shell -c "from monitors.tasks import schedule_endpoint_checks; schedule_endpoint_checks.delay()"`
+5. Verify log lines show `monitors.tasks.schedule_endpoint_checks` (shim → module) and `Endpoint scheduler run completed` within 60s. _Last verified: Nov 16, 2025 @ 18:24 UTC (mod beat/worker logs captured in PR notes)._

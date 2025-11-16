@@ -22,18 +22,19 @@ Milestone M2 of the modular monolith refactor moves payment flows out of the leg
 
 ## Decisions
 
-1. **Module layout** – All billing business logic lives in `modules/billing/services.py`. Separate files are overkill right now; the single module exposes typed service functions for checkout, portal, cancellation, and webhook dispatch.
-2. **Shared helpers** – `_resolve_frontend_base_url` remains in `payments.views` and is passed into the services via plain strings. This keeps tenant-domain heuristics co-located with DRF request handling.
-3. **Logging + audit boundary** – Services return structured dataclasses (`CheckoutSessionResult`, `PortalSessionResult`, `CancellationResult`, `WebhookDispatchResult`). DRF views own all logging, metrics, and audit events, preserving existing log formats.
-4. **Stripe integration** – Services call `stripe.*` directly (same as legacy code) but accept the module as an injectable dependency so tests can keep patching `stripe.checkout.Session.create` et al.
+1. **Module layout** – Canonical DRF views now live in `modules/billing/views.py`; they import DTO helpers from `modules/billing/__init__.py` and expose the exact class/function names the legacy app expects. The legacy `payments/views.py` file became a shim that re-exports those views.
+2. **Shared helpers** – `_resolve_frontend_base_url` moved with the canonical views so tenant-domain heuristics sit beside Stripe orchestration. Shims do not duplicate the helper; they simply import from the module.
+3. **Logging + audit boundary** – Views continue to emit structured log lines and audit events while delegating Stripe operations to helper functions (`create_subscription_checkout_session`, `create_billing_portal_session`, etc.) imported from `modules.billing`.
+4. **Stripe integration** – The module sets the Stripe client within each view and still accepts `stripe` as an injectable dependency for tests, but compatibility patches now target `payments.views.stripe` via the shim.
 5. **Webhook scope** – The Stripe webhook dispatcher joins this extraction. Views continue to verify signatures, then hand the event to `dispatch_billing_webhook_event()` so tenant updates live beside the rest of the billing logic.
+6. **Compatibility shim** – `payments/views.py` registers a `log_audit_event` resolver with the module so legacy tests that patch `payments.views.log_audit_event` or `stripe` still intercept the calls. This removes the need to duplicate implementation while keeping import paths stable until cutover.
 
 ## Consequences
 
-- DRF views shrink to validation + logging glue while services encapsulate Stripe-specific code paths.
-- Tests can mock `modules.billing.services` in view-level suites and directly unit-test the services for payload correctness.
-- Future modules (e.g., CLI scripts, Celery tasks) can reuse the same services without importing DRF views.
-- `_resolve_frontend_base_url` stays put for now; once other features depend on it we can lift it into a shared helper without blocking this milestone.
+- DRF views shrink to validation + logging glue inside `modules/billing/views.py` while the shim keeps import compatibility.
+- Tests can continue patching `payments.views.stripe` and `payments.views.log_audit_event`; under the hood those proxies resolve back into the module implementation.
+- Future modules (e.g., CLI scripts, Celery tasks) can reuse the `modules.billing` entry points without importing DRF views or legacy files.
+- `_resolve_frontend_base_url` is now colocated with the canonical views; future refactors can lift it again if multiple modules need it.
 
 ## Validation
 
