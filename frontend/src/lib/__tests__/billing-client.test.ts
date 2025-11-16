@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Mocked } from "vitest";
 import type { AxiosError } from "axios";
 
 import { createBillingCheckoutSession } from "../billing-client";
@@ -11,14 +10,16 @@ vi.mock("../api", () => ({
   },
 }));
 
-type ApiDouble = typeof import("../api")["api"];
+type ApiMock = {
+  post: ReturnType<typeof vi.fn>;
+};
 
 describe("billing-client", () => {
-  let apiMock: Mocked<ApiDouble>;
+  let apiMock: ApiMock;
 
   beforeEach(async () => {
     const module = await import("../api");
-    apiMock = vi.mocked(module.api);
+    apiMock = module.api as unknown as ApiMock;
     apiMock.post.mockReset();
   });
 
