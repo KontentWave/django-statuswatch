@@ -6,7 +6,7 @@
  */
 
 import type { AxiosError } from "axios";
-import { createLogger, type Logger, type LogEntry } from "./logger";
+import { createLogger, type Logger } from "./logger";
 
 type EndpointAction = "list" | "create" | "delete";
 type EndpointPhase = "start" | "success" | "error";
@@ -25,7 +25,24 @@ type EndpointLogEntryBase = {
 
 export type EndpointLogEntry = EndpointLogEntryBase & Record<string, unknown>;
 
+export type EndpointFileLoggerFactory = (
+  name: string,
+  filePath: string
+) => Logger;
+
 let logger: Logger = createLogger("endpoint-client");
+let fileLoggerFactory: EndpointFileLoggerFactory | undefined;
+
+/**
+ * Inject a custom file logger factory (used in Node-based tests).
+ * This keeps browser builds free of node:* imports while still
+ * allowing tests to write structured logs to disk when needed.
+ */
+export function setEndpointFileLoggerFactory(
+  factory: EndpointFileLoggerFactory | undefined
+): void {
+  fileLoggerFactory = factory;
+}
 
 /**
  * Configure endpoint logger (for testing)
@@ -36,8 +53,8 @@ export function configureEndpointLogger(
 ): void {
   const filePath = typeof options === "string" ? options : options.filePath;
 
-  if (filePath && canUseFileLogger()) {
-    logger = createFileLogger("endpoint-client", filePath);
+  if (filePath && fileLoggerFactory) {
+    logger = fileLoggerFactory("endpoint-client", filePath);
     return;
   }
 
@@ -95,59 +112,4 @@ function isAxiosError(error: unknown): error is AxiosError {
   );
 }
 
-function canUseFileLogger(): boolean {
-  if (typeof process === "undefined") {
-    return false;
-  }
-
-  const isNode = Boolean(process.versions?.node);
-  if (!isNode) {
-    return false;
-  }
-
-  const hasTestFlag =
-    process.env.VITEST === "true" || process.env.NODE_ENV === "test";
-
-  return hasTestFlag || typeof window === "undefined";
-}
-
-function createFileLogger(name: string, filePath: string): Logger {
-  // Browser-safe logger - no file system access in browser
-  // Files are only written in Node.js test environment
-  return {
-    async log(event: string, data?: unknown): Promise<void> {
-      const isTestEnv =
-        typeof process !== "undefined" &&
-        (process.env?.VITEST === "true" || process.env?.NODE_ENV === "test");
-
-      const runningInBrowser = typeof window !== "undefined" && !isTestEnv;
-
-      if (runningInBrowser) {
-        // In browser: avoid touching the filesystem
-        return;
-      }
-
-      // In Node.js (tests): dynamically import fs/path to avoid Vite externalization
-      const fs = await import("fs/promises");
-      const path = await import("path");
-
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-
-      const base: LogEntry = {
-        timestamp: new Date().toISOString(),
-        event: `[${name}] ${event}`,
-        logger: name,
-        pid: typeof process !== "undefined" ? process.pid : undefined,
-        environment:
-          typeof process !== "undefined" ? process.env.NODE_ENV : undefined,
-      };
-      const payload =
-        data && typeof data === "object"
-          ? (data as Record<string, unknown>)
-          : { value: data };
-
-      const entry = { ...base, ...payload };
-      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
-    },
-  };
-}
+// Node-specific logging is injected via setEndpointFileLoggerFactory during tests

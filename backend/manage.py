@@ -3,10 +3,13 @@
 import os
 import sys
 
+from modules.core.settings import setup_settings_logging
+
 
 def main():
     """Run administrative tasks."""
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
+    setup_settings_logging(logger_name="app.settings_loader.manage")
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

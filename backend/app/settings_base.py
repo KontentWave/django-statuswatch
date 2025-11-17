@@ -5,47 +5,60 @@ This module contains environment-agnostic settings shared across all environment
 Environment-specific overrides are in settings_development.py and settings_production.py.
 """
 
-import os
-from datetime import timedelta
-from pathlib import Path
-
-import environ
-from modules.core import (
+from modules.core.settings import (
+    BASE_DIR,
+    build_celery_config,
+    build_default_database_config,
+    build_email_defaults,
+    build_logging_config,
+    build_rest_framework_config,
+    build_simple_jwt_defaults,
+    build_stripe_config,
+    get_env,
     get_installed_apps,
     get_middleware,
     get_shared_apps,
     get_tenant_apps,
 )
+from modules.core.settings import (
+    DATABASE_ROUTERS as CORE_DATABASE_ROUTERS,
+)
+from modules.core.settings import (
+    DOMAIN_MODEL as CORE_DOMAIN_MODEL,
+)
+from modules.core.settings import (
+    LOG_DIR as CORE_LOG_DIR,
+)
+from modules.core.settings import (
+    PUBLIC_SCHEMA_NAME as CORE_PUBLIC_SCHEMA_NAME,
+)
+from modules.core.settings import (
+    SHOW_PUBLIC_IF_NO_TENANT_FOUND as CORE_SHOW_PUBLIC_IF_NO_TENANT_FOUND,
+)
+from modules.core.settings import (
+    TENANT_DOMAIN_MODEL as CORE_TENANT_DOMAIN_MODEL,
+)
+from modules.core.settings import (
+    TENANT_MODEL as CORE_TENANT_MODEL,
+)
+
+env = get_env()
 
 # -------------------------------------------------------------------
-# Base directories and paths
+# File system locations
 # -------------------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
-
-# -------------------------------------------------------------------
-# Environment variable setup
-# -------------------------------------------------------------------
-env = environ.Env()
-
-# Look for .env in backend/ first, then project root
-env_file = BASE_DIR / ".env"
-if not env_file.exists():
-    env_file = BASE_DIR.parent / ".env"
-environ.Env.read_env(env_file)
+LOG_DIR = CORE_LOG_DIR
 
 # -------------------------------------------------------------------
 # django-tenants Configuration
 # -------------------------------------------------------------------
-TENANT_MODEL = "tenants.Client"  # app_label.ModelName
-DOMAIN_MODEL = "tenants.Domain"
-TENANT_DOMAIN_MODEL = "tenants.Domain"
-PUBLIC_SCHEMA_NAME = "public"
+TENANT_MODEL = CORE_TENANT_MODEL
+DOMAIN_MODEL = CORE_DOMAIN_MODEL
+TENANT_DOMAIN_MODEL = CORE_TENANT_DOMAIN_MODEL
+PUBLIC_SCHEMA_NAME = CORE_PUBLIC_SCHEMA_NAME
 
 # Allow internal requests (e.g., from Caddy with Host: web:8000) to use public schema
-SHOW_PUBLIC_IF_NO_TENANT_FOUND = True
+SHOW_PUBLIC_IF_NO_TENANT_FOUND = CORE_SHOW_PUBLIC_IF_NO_TENANT_FOUND
 
 SHARED_APPS: tuple[str, ...] = tuple(get_shared_apps())
 TENANT_APPS: tuple[str, ...] = tuple(get_tenant_apps())
@@ -53,7 +66,7 @@ TENANT_APPS: tuple[str, ...] = tuple(get_tenant_apps())
 # Final INSTALLED_APPS resolved through the core registry (shared first, deduped)
 INSTALLED_APPS = get_installed_apps()
 
-DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
+DATABASE_ROUTERS = CORE_DATABASE_ROUTERS
 
 # Use separate URLConfs for public (root schema) vs tenant schemas
 PUBLIC_SCHEMA_URLCONF = "app.urls_public"
@@ -85,17 +98,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "app.wsgi.application"
 
-# -------------------------------------------------------------------
-# Database (structure only - connection details loaded from env in child settings)
-# -------------------------------------------------------------------
-DATABASES = {"default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}")}
-
-# If using Postgres, switch to the django-tenants backend
-if DATABASES["default"]["ENGINE"] in (
-    "django.db.backends.postgresql",
-    "django.db.backends.postgresql_psycopg2",
-):
-    DATABASES["default"]["ENGINE"] = "django_tenants.postgresql_backend"
+DATABASES = build_default_database_config()
 
 # Connection pooling
 CONN_MAX_AGE = env.int("DB_CONN_MAX_AGE", default=600)
@@ -154,30 +157,17 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # -------------------------------------------------------------------
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# -------------------------------------------------------------------
-# Celery/Redis Configuration
-# -------------------------------------------------------------------
-# Prefer explicit CELERY_* vars; otherwise fall back to REDIS_URL; finally to sane defaults.
-REDIS_URL_DEFAULT = "redis://127.0.0.1:6379/0"
-REDIS_URL = os.getenv("REDIS_URL", REDIS_URL_DEFAULT)
-
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL") or REDIS_URL
-# For result backend, use /1 database by default (separate from broker which uses /0)
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND") or REDIS_URL.replace("/0", "/1")
-
-CELERY_TIMEZONE = TIME_ZONE
-CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_ALWAYS_EAGER = False
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-
-CELERY_BEAT_SCHEDULE = {
-    "monitors.schedule_endpoint_checks": {
-        "task": "monitors.tasks.schedule_endpoint_checks",
-        "schedule": timedelta(minutes=1),
-    }
-}
+celery_config = build_celery_config(env, timezone=TIME_ZONE)
+REDIS_URL = celery_config["REDIS_URL"]
+CELERY_BROKER_URL = celery_config["CELERY_BROKER_URL"]
+CELERY_RESULT_BACKEND = celery_config["CELERY_RESULT_BACKEND"]
+CELERY_TIMEZONE = celery_config["CELERY_TIMEZONE"]
+CELERY_TASK_TRACK_STARTED = celery_config["CELERY_TASK_TRACK_STARTED"]
+CELERY_TASK_ALWAYS_EAGER = celery_config["CELERY_TASK_ALWAYS_EAGER"]
+CELERY_ACCEPT_CONTENT = celery_config["CELERY_ACCEPT_CONTENT"]
+CELERY_TASK_SERIALIZER = celery_config["CELERY_TASK_SERIALIZER"]
+CELERY_RESULT_SERIALIZER = celery_config["CELERY_RESULT_SERIALIZER"]
+CELERY_BEAT_SCHEDULE = celery_config["CELERY_BEAT_SCHEDULE"]
 
 # Grace period before re-enqueuing endpoint pings
 PENDING_REQUEUE_GRACE_SECONDS = env.int("PENDING_REQUEUE_GRACE_SECONDS", default=90)
@@ -185,10 +175,11 @@ PENDING_REQUEUE_GRACE_SECONDS = env.int("PENDING_REQUEUE_GRACE_SECONDS", default
 # -------------------------------------------------------------------
 # Stripe Payment Configuration
 # -------------------------------------------------------------------
-STRIPE_PUBLIC_KEY = env("STRIPE_PUBLIC_KEY", default="")
-STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
-STRIPE_PRO_PRICE_ID = env("STRIPE_PRO_PRICE_ID", default="")
-STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+stripe_config = build_stripe_config(env)
+STRIPE_PUBLIC_KEY = stripe_config["STRIPE_PUBLIC_KEY"]
+STRIPE_SECRET_KEY = stripe_config["STRIPE_SECRET_KEY"]
+STRIPE_PRO_PRICE_ID = stripe_config["STRIPE_PRO_PRICE_ID"]
+STRIPE_WEBHOOK_SECRET = stripe_config["STRIPE_WEBHOOK_SECRET"]
 
 # -------------------------------------------------------------------
 # Admin Panel
@@ -198,377 +189,28 @@ ADMIN_URL = env("ADMIN_URL", default="admin/")
 # -------------------------------------------------------------------
 # REST Framework Configuration
 # -------------------------------------------------------------------
-REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
-    ),
-    "EXCEPTION_HANDLER": "api.exception_handler.custom_exception_handler",
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 50,
-    "DEFAULT_THROTTLE_RATES": {
-        "anon": "100/hour",  # General anonymous users
-        "user": "1000/hour",  # Authenticated users
-        "registration": "5/hour",  # Registration endpoint (strict)
-        "login": "10/hour",  # Login endpoint (prevent brute-force)
-        "burst": "20/min",  # Burst protection (short-term)
-        "sustained": "100/day",  # Long-term protection
-        "billing": "100/hour",  # Billing/checkout endpoints (prevent abuse)
-    },
-}
+REST_FRAMEWORK = build_rest_framework_config()
 
 # -------------------------------------------------------------------
 # JWT Configuration
 # -------------------------------------------------------------------
 # Note: SECRET_KEY must be defined in environment-specific settings before importing this
-SIMPLE_JWT = {
-    # Token Lifetimes
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),  # Short-lived access tokens
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),  # Longer-lived refresh tokens
-    # Token Rotation
-    "ROTATE_REFRESH_TOKENS": True,  # Issue new refresh token on refresh
-    "BLACKLIST_AFTER_ROTATION": True,  # Blacklist old refresh token
-    # Security
-    "UPDATE_LAST_LOGIN": True,  # Update user's last_login on token generation
-    # Token Claims
-    "AUTH_HEADER_TYPES": ("Bearer",),
-    "USER_ID_FIELD": "id",
-    "USER_ID_CLAIM": "user_id",
-    # Algorithms - SIGNING_KEY will be set in environment-specific settings
-    "ALGORITHM": "HS256",
-    "VERIFYING_KEY": None,
-    # Token Classes
-    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
-    "TOKEN_TYPE_CLAIM": "token_type",
-    # Sliding Tokens (disabled, we use access/refresh pair)
-    "SLIDING_TOKEN_REFRESH_EXP_CLAIM": "refresh_exp",
-    "SLIDING_TOKEN_LIFETIME": timedelta(minutes=5),
-    "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=1),
-}
+SIMPLE_JWT = build_simple_jwt_defaults()
 
 # -------------------------------------------------------------------
 # Email Configuration (base settings)
 # -------------------------------------------------------------------
-EMAIL_HOST = env("EMAIL_HOST", default="localhost")
-EMAIL_PORT = env.int("EMAIL_PORT", default=587)
-EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
-EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
-EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@statuswatch.local")
-SERVER_EMAIL = env("SERVER_EMAIL", default=DEFAULT_FROM_EMAIL)
-
-# Frontend URL for email links (verification, password reset, etc.)
-# Default empty - will auto-detect from request.get_host() in production
-# Override in development: FRONTEND_URL=https://localhost:5173
-FRONTEND_URL = env("FRONTEND_URL", default="")
+_email_defaults = build_email_defaults(env)
+EMAIL_HOST = _email_defaults["EMAIL_HOST"]
+EMAIL_PORT = _email_defaults["EMAIL_PORT"]
+EMAIL_USE_TLS = _email_defaults["EMAIL_USE_TLS"]
+EMAIL_HOST_USER = _email_defaults["EMAIL_HOST_USER"]
+EMAIL_HOST_PASSWORD = _email_defaults["EMAIL_HOST_PASSWORD"]
+DEFAULT_FROM_EMAIL = _email_defaults["DEFAULT_FROM_EMAIL"]
+SERVER_EMAIL = _email_defaults["SERVER_EMAIL"]
+FRONTEND_URL = _email_defaults["FRONTEND_URL"]
 
 # -------------------------------------------------------------------
 # Logging Configuration (shared base)
 # -------------------------------------------------------------------
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {
-            "format": "[{levelname}] {asctime} {name} {module}.{funcName}:{lineno} - {message}",
-            "style": "{",
-        },
-        "simple": {
-            "format": "[{levelname}] {message}",
-            "style": "{",
-        },
-    },
-    "filters": {
-        "require_debug_false": {
-            "()": "django.utils.log.RequireDebugFalse",
-        },
-        "require_debug_true": {
-            "()": "django.utils.log.RequireDebugTrue",
-        },
-        "max_warning": {
-            "()": "app.logging_filters.MaxLevelFilter",
-            "level": "WARNING",
-        },
-    },
-    "handlers": {
-        "console": {
-            "level": "INFO",
-            "class": "logging.StreamHandler",
-            "formatter": "verbose",
-        },
-        "console_debug": {
-            "level": "DEBUG",
-            "filters": ["require_debug_true"],
-            "class": "logging.StreamHandler",
-            "formatter": "verbose",
-        },
-        "file_app": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "statuswatch.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-            "filters": ["max_warning"],
-        },
-        "file_error": {
-            "level": "ERROR",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "error.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_security": {
-            "level": "WARNING",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "security.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_request": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "request.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_audit": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "audit.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_performance": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "performance.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_payments": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "payments.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_billing": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "billing.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_webhooks": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "webhooks.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_webhooks_debug": {
-            "level": "DEBUG",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "webhooks_debug.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_webhook_signatures": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "webhook_signatures.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_subscriptions": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "subscriptions.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_cancellations": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "cancellations.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_subscription_state": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "subscription_state.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_authentication": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "authentication.log",
-            "maxBytes": 1024 * 1024 * 5,  # 5 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_health": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "health.log",
-            "maxBytes": 1024 * 1024 * 10,
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-        "file_frontend_resolution": {
-            "level": "INFO",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOG_DIR / "frontend_resolution.log",
-            "maxBytes": 1024 * 1024 * 10,
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["console", "file_app", "file_error"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "django.security": {
-            "handlers": ["file_security", "console"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-        "django.request": {
-            "handlers": ["file_app", "file_error", "console"],
-            "level": "ERROR",
-            "propagate": False,
-        },
-        "api": {
-            "handlers": ["console", "file_app"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "tenants": {
-            "handlers": ["console", "file_app"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "tenant.routing": {
-            "handlers": ["console", "file_app"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments": {
-            "handlers": ["console", "file_app"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.checkout": {
-            "handlers": ["console", "file_payments"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.billing": {
-            "handlers": ["console", "file_billing"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.webhooks": {
-            "handlers": ["console", "file_webhooks"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.webhooks.debug": {
-            "handlers": ["file_webhooks_debug"],
-            "level": "DEBUG",
-            "propagate": False,
-        },
-        "payments.webhooks.signature": {
-            "handlers": ["file_webhook_signatures"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.subscriptions": {
-            "handlers": ["console", "file_subscriptions"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.subscription_state": {
-            "handlers": ["file_subscription_state"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.cancellations": {
-            "handlers": ["console", "file_cancellations"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "payments.frontend_resolver": {
-            "handlers": ["file_frontend_resolution"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "api.auth": {
-            "handlers": ["console", "file_authentication", "file_security"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "api.request": {
-            "handlers": ["file_request"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "api.audit": {
-            "handlers": ["file_audit", "console"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "api.performance": {
-            "handlers": ["file_performance", "console"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-        "api.health": {
-            "handlers": ["file_health"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "monitors": {
-            "handlers": ["console", "file_app"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "monitors.audit": {
-            "handlers": ["file_audit", "console"],
-            "level": "INFO",  # Will be overridden in dev to DEBUG
-            "propagate": False,
-        },
-        "monitors.performance": {
-            "handlers": ["file_performance", "console"],
-            "level": "INFO",
-            "propagate": False,
-        },
-        "subscriptions.feature_gating": {
-            "handlers": ["console", "file_subscriptions"],
-            "level": "INFO",
-            "propagate": False,
-        },
-    },
-    "root": {
-        "handlers": ["console", "file_app"],
-        "level": "INFO",
-    },
-}
+LOGGING = build_logging_config()
