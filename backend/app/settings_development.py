@@ -30,8 +30,6 @@ ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
     ".localhost",  # Wildcard for subdomains
-    "django-01.local",
-    ".django-01.local",
     "statuswatch.local",
     ".statuswatch.local",
 ]
