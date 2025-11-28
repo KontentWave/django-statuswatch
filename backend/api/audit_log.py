@@ -27,6 +27,7 @@ class AuditEvent(Enum):
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
     USER_LOGIN_FAILED = "user_login_failed"
+    TOKEN_REFRESH = "token_refresh"
 
     # Email events
     EMAIL_VERIFIED = "email_verified"
@@ -131,6 +132,7 @@ def _get_event_category(event: AuditEvent) -> str:
         AuditEvent.USER_LOGIN,
         AuditEvent.USER_LOGOUT,
         AuditEvent.USER_LOGIN_FAILED,
+        AuditEvent.TOKEN_REFRESH,
     }
 
     account_events = {

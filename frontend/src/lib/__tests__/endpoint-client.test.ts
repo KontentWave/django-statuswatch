@@ -2,20 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { AxiosError } from "axios";
 
 import {
   configureEndpointLogger,
   resetEndpointLogger,
+  setEndpointFileLoggerFactory,
 } from "../endpoint-logger";
+import type { Logger } from "../logger";
 import {
   createEndpoint,
   deleteEndpoint,
   listEndpoints,
-  type CreateEndpointRequest,
 } from "../endpoint-client";
+import type { CreateEndpointRequest } from "@/types/api";
 
 vi.mock("../api", () => createApiDouble());
 
@@ -39,6 +41,7 @@ describe("endpoint-client", () => {
   beforeEach(async () => {
     logDir = await mkdtemp(join(tmpdir(), "endpoint-client-test-"));
     logFilePath = join(logDir, "endpoint-client.log");
+    setEndpointFileLoggerFactory(createNodeFileLogger);
     configureEndpointLogger({ filePath: logFilePath });
 
     const module = await import("../api");
@@ -49,6 +52,7 @@ describe("endpoint-client", () => {
   });
 
   afterEach(async () => {
+    setEndpointFileLoggerFactory(undefined);
     resetEndpointLogger();
     try {
       await fs.rm(logDir, { recursive: true, force: true });
@@ -206,3 +210,25 @@ async function readLogEntries(filePath: string) {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
+
+const createNodeFileLogger = (name: string, filePath: string): Logger => {
+  return {
+    async log(event: string, data?: unknown): Promise<void> {
+      await fs.mkdir(dirname(filePath), { recursive: true });
+
+      const payload =
+        data && typeof data === "object"
+          ? (data as Record<string, unknown>)
+          : { value: data };
+
+      const entry = {
+        timestamp: new Date().toISOString(),
+        event: `[${name}] ${event}`,
+        logger: name,
+        ...payload,
+      };
+
+      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    },
+  };
+};

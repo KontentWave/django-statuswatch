@@ -1,8 +1,3 @@
-from rest_framework.routers import DefaultRouter
+from modules.monitoring.urls import router, urlpatterns
 
-from .views import EndpointViewSet
-
-router = DefaultRouter()
-router.register("endpoints", EndpointViewSet, basename="endpoint")
-
-urlpatterns = router.urls
+__all__ = ["router", "urlpatterns"]

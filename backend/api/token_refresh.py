@@ -10,14 +10,20 @@ This custom view works in the current tenant schema and sets user=None to avoid
 FK validation errors in OutstandingToken creation.
 """
 
-import datetime
 import logging
 
+from modules.accounts.authentication import TenantAuthService, TokenRefreshError
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken as _RefreshToken
+
+from api.audit_log import AuditEvent, log_audit_event
+from api.performance_log import PerformanceMonitor
+
+# Backwards compatibility for existing tests that patch this module attribute
+RefreshToken = _RefreshToken
 
 logger = logging.getLogger("api.auth")
 
@@ -54,94 +60,66 @@ class MultiTenantTokenRefreshView(APIView):
             }
         """
         refresh_token = request.data.get("refresh")
+        client_ip = request.META.get("REMOTE_ADDR")
+        user_agent = request.META.get("HTTP_USER_AGENT")
 
         if not refresh_token:
             logger.warning(
                 f"[TOKEN-REFRESH] Missing refresh token in request from "
                 f"IP: {request.META.get('REMOTE_ADDR')}"
             )
+            log_audit_event(
+                AuditEvent.TOKEN_REFRESH,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "missing_refresh_token"},
+            )
             return Response(
                 {"error": "Refresh token is required"}, status=status.HTTP_400_BAD_REQUEST
             )
 
         try:
-            # Parse and validate the refresh token
-            # This checks the blacklist in the current tenant schema
-            refresh = RefreshToken(refresh_token)
+            with PerformanceMonitor("token_refresh", threshold_ms=250):
+                result = TenantAuthService.refresh_tokens(refresh_token, token_class=RefreshToken)
 
-            logger.info(
-                f"[TOKEN-REFRESH] Token refresh request for user_id: {refresh.get('user_id')}, "
-                f"jti: {refresh.get('jti')}"
+            logger.info(f"[TOKEN-REFRESH] ✓ Token refresh successful for user_id: {result.user_id}")
+
+            log_audit_event(
+                AuditEvent.TOKEN_REFRESH,
+                user_id=result.user_id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                success=True,
+                details={
+                    "rotated": result.rotated,
+                    "old_jti": result.old_jti,
+                    "new_jti": result.new_jti,
+                },
             )
 
-            # Generate new access token
-            data = {"access": str(refresh.access_token)}
+            return Response(result.data, status=status.HTTP_200_OK)
 
-            # Get JWT settings (allow runtime modifications in tests)
-            from django.conf import settings as django_settings
-
-            jwt_config = getattr(django_settings, "SIMPLE_JWT", {})
-            rotate_tokens = jwt_config.get("ROTATE_REFRESH_TOKENS", False)
-            blacklist_after = jwt_config.get("BLACKLIST_AFTER_ROTATION", False)
-
-            # If token rotation is enabled, blacklist old token and return new refresh token
-            if rotate_tokens:
-                if blacklist_after:
-                    try:
-                        # Manually blacklist the token without validating user exists
-                        from django.utils import timezone
-                        from rest_framework_simplejwt.token_blacklist.models import (
-                            BlacklistedToken,
-                            OutstandingToken,
-                        )
-
-                        jti = refresh.get("jti")
-                        exp = refresh.get("exp")
-
-                        # Get or create outstanding token
-                        # NOTE: user field set to None to avoid FK validation
-                        # The token itself contains user_id claim, so user association is preserved
-                        token, created = OutstandingToken.objects.get_or_create(
-                            jti=jti,
-                            defaults={
-                                "token": str(refresh),
-                                "created_at": timezone.now(),
-                                "expires_at": datetime.datetime.fromtimestamp(exp, tz=datetime.UTC),
-                                # Explicitly NULL - FK validation fails in multi-tenant setup
-                                "user": None,
-                            },
-                        )
-
-                        # Blacklist it
-                        BlacklistedToken.objects.get_or_create(token=token)
-
-                        logger.info(f"[TOKEN-REFRESH] Old refresh token blacklisted (jti: {jti})")
-                    except Exception as e:
-                        # Token blacklist not installed or other error
-                        logger.warning(f"[TOKEN-REFRESH] Could not blacklist token: {e}")
-
-                # Generate new refresh token
-                refresh.set_jti()
-                refresh.set_exp()
-                refresh.set_iat()
-
-                data["refresh"] = str(refresh)
-                logger.info(
-                    f"[TOKEN-REFRESH] New refresh token generated (jti: {refresh.get('jti')})"
-                )
-
-            logger.info(
-                f"[TOKEN-REFRESH] ✓ Token refresh successful for user_id: {refresh.get('user_id')}"
-            )
-
-            return Response(data, status=status.HTTP_200_OK)
-
-        except TokenError as e:
+        except (TokenRefreshError, TokenError) as e:
             logger.warning(f"[TOKEN-REFRESH] ✗ Invalid or expired token: {str(e)}")
+            log_audit_event(
+                AuditEvent.TOKEN_REFRESH,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": str(e)},
+            )
             return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
 
         except Exception as e:
             logger.error(f"[TOKEN-REFRESH] ✗ Unexpected error: {e}", exc_info=True)
+            log_audit_event(
+                AuditEvent.TOKEN_REFRESH,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                success=False,
+                details={"reason": "unexpected_error"},
+            )
             return Response(
                 {"error": "An error occurred while refreshing the token"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -8,6 +8,7 @@ in the test suite, ensuring proper handling of multi-tenant database operations.
 import logging
 import re
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,11 @@ def pytest_configure(config):
         for db_config in settings.DATABASES.values():
             db_config["CONN_MAX_AGE"] = 0
             db_config["CONN_HEALTH_CHECKS"] = False
+
+    # Ensure STATIC_ROOT exists so Django/Whitenoise stop warning during tests.
+    static_root = getattr(settings, "STATIC_ROOT", None)
+    if static_root:
+        Path(static_root).mkdir(parents=True, exist_ok=True)
 
 
 # Delay Django imports until after pytest setup

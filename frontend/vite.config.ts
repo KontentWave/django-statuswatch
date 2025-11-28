@@ -42,7 +42,7 @@ export default defineConfig(({ mode }) => {
       //   marcepokus.localhost:5173/api → marcepokus.localhost:8001/api
       proxy: {
         "/api": {
-          target: "http://localhost:8001", // Default fallback
+          target: "http://localhost:8000", // Default fallback
           changeOrigin: false, // CRITICAL: Preserve Host header with tenant subdomain
           secure: false,
           // Dynamic router: extract tenant from Host header and route to correct backend
@@ -55,17 +55,17 @@ export default defineConfig(({ mode }) => {
 
             // If no subdomain (just "localhost"), route to localhost:8001
             if (hostname === "localhost") {
-              return "http://localhost:8001";
+              return "http://localhost:8000";
             }
 
             // If subdomain exists (e.g., "acme.localhost"), route to tenant backend
             if (parts.length >= 2 && parts[parts.length - 1] === "localhost") {
               const tenant = parts[0];
-              return `http://${tenant}.localhost:8001`;
+              return `http://${tenant}.localhost:8000`;
             }
 
             // Fallback for any other domain
-            return "http://localhost:8001";
+            return "http://localhost:8000";
           },
         },
       },

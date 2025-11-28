@@ -4,19 +4,19 @@ import { api } from "./api";
 
 export type BillingPlan = "pro";
 
-interface BillingCheckoutResponse {
+export interface BillingCheckoutResponse {
   url?: string;
   detail?: string;
   error?: string;
 }
 
-interface BillingPortalResponse {
+export interface BillingPortalResponse {
   url?: string;
   detail?: string;
   error?: string;
 }
 
-interface BillingCancelResponse {
+export interface BillingCancelResponse {
   plan?: string;
   detail?: string;
   error?: string;
@@ -38,8 +38,7 @@ export async function createBillingCheckoutSession(
     return data.url;
   } catch (error) {
     const axiosError = error as AxiosError<BillingCheckoutResponse>;
-    const fallback =
-      axiosError.message || "We could not start the Stripe checkout session.";
+    const fallback = "We could not start the Stripe checkout session.";
 
     throw new Error(
       axiosError.response?.data?.detail ||

@@ -2,12 +2,14 @@ name: Publish to GHCR
 
 on:
   push:
-    branches: [ main ]          # dev channel -> edge + timestamp + sha
+    branches:
+      - main # dev channel -> edge + timestamp + sha
+      - refactor/mod-monolith # or use a pattern like "refactor/**"
     paths:
-      - 'backend/**'
-      - '.github/workflows/publish.yml'
+      - "backend/**"
+      - ".github/workflows/publish.yml"
   release:
-    types: [ published ]        # stable channel -> latest + semver tags
+    types: [published] # stable channel -> latest + semver tags
 
 permissions:
   contents: read
@@ -21,7 +23,7 @@ env:
   # GHCR requires lowercase path segments
   OWNER_LC: ${{ github.repository_owner }}
   IMAGE_NAME: statuswatch-web
-  IMAGE_PLATFORMS: linux/amd64     # add linux/arm64 later if you want
+  IMAGE_PLATFORMS: linux/amd64 # add linux/arm64 later if you want
 
 jobs:
   publish:

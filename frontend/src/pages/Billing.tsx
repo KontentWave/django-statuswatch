@@ -12,7 +12,8 @@ import { logBillingEvent } from "@/lib/billing-logger";
 import { redirectTo } from "@/lib/navigation";
 import { clearCheckoutPlan, rememberCheckoutPlan } from "@/lib/billing-storage";
 import { logSubscriptionEvent } from "@/lib/subscription-logger";
-import { SubscriptionPlan, useSubscriptionStore } from "@/stores/subscription";
+import { useSubscriptionStore } from "@/stores/subscription";
+import type { SubscriptionPlan } from "@/types/api";
 
 const proPlanFeatures = [
   "Unlimited monitored endpoints",

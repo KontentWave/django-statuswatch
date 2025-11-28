@@ -2,6 +2,8 @@
 
 > **Navigation:** [← Back to README](../../README.md) | [Deployment Guide](../deployment/EC2_DEPLOYMENT_GUIDE.md) | [ADRs](ADRs/) | [Diagnostic Scripts](../deployment/diag-scripts/README.md)
 
+> **Why this doc exists:** the public-facing README is intentionally kept to a ~60-second skim for recruiting/BD conversations. Use this internal sheet (plus the linked guides) for the real implementation details and day-to-day runbooks.
+
 ---
 
 ## Phase 1 MVP Specification
@@ -1453,6 +1455,7 @@ StatusWatch is successfully deployed on EC2 with proper multi-tenant domain conf
 - **[← Back to README](../../README.md)** - Project overview and quick start
 - **[Deployment Guide](../deployment/EC2_DEPLOYMENT_GUIDE.md)** - Complete EC2 setup
 - **[ADR 08: Deployment](ADRs/Phase%202/08-deployment.md)** - Architecture decisions
+- **[ADR 11: Shared Settings Router & Logging Helper](ADRs/Phase%203%20Refactor%20to%20Modular%20Monolith/11-shared-settings-router.md)** - Environment routing + logging consolidation
 - **[Diagnostic Scripts](../deployment/diag-scripts/README.md)** - Production monitoring tools
 - **[All ADRs](ADRs/)** - Architecture decision records
 
@@ -1464,3 +1467,254 @@ StatusWatch is successfully deployed on EC2 with proper multi-tenant domain conf
 **Detailed Deployment ADR:** `.github/docs/ADRs/Phase 2/08-deployment.md`  
 **Last Updated:** November 12, 2025, 22:30 CET  
 **Next Review:** Post-production monitoring (7 days)
+
+### 9. Refactor to Modular Monolith
+
+**Status:** `In Progress`
+
+**Description:**
+As the application has grown through Phase 1 and 2, the initial Django project structure has accumulated complexity. This phase focuses on paying down this technical debt by refactoring the backend into a **Modular Monolith**. The goal is to establish clearer domain boundaries (e.g., `accounts`, `monitoring`, `billing`), improve separation of concerns, and increase long-term maintainability without the operational overhead of microservices.
+
+**Key Implementation Details:**
+
+- **Parallel Stack Strategy:** The refactor will be developed on a `refactor/mod-monolith` branch. To ensure a safe, isolated development process, a `docker-compose.mod.yml` override will be created. This spins up a _completely parallel stack_ (`api_mod`, `worker_mod`, `db_mod`, `redis_mod`) that runs alongside the existing stable stack.
+- **Complete Isolation:** This new "mod" stack will run on different ports (e.g., API on `8081`, DB on `5433`) and use its own dedicated database (`statuswatch_mod`) and Redis instances. This prevents any data collision, queue "double processing," or interference with the working application.
+- **Validation:** The frontend's Vite config will be temporarily pointed to the new modular API's origin (`http://localhost:8081`). The full suite of unit tests and the upcoming E2E test suite will be run against this new stack to confirm 100% behavioral parity.
+- **Cutover & Rollback:**
+  - **Cutover:** Once validated, the `refactor/mod-monolith` branch will be merged. The CI/CD pipeline will build and push the new images (e.g., `statuswatch:mod`). The production environment will be updated to use these new images, completing the migration.
+  - **Rollback:** Because the refactor is developed in isolation, a rollback is simple and low-risk. If any issues are found post-deployment, the production environment can be immediately reverted to the previous stable image tag.
+
+#### Modular Stack Workflow (local dev)
+
+Follow this checklist whenever you need to spin up the parallel stack for refactoring or verification. All commands run from the repo root (`/home/marcel/projects/statuswatch-project`).
+
+> **Env toggle:** copy `backend/.env.mod.example` → `backend/.env.mod` and `frontend/.env.example` → `frontend/.env.development.local`, then set `VITE_BACKEND_ORIGIN=http://acme.localhost:8081`. Remove that override to fall back to the legacy stack.
+
+1. **Build/tag the modular image** (once per code change):
+
+```bash
+docker build -f backend/Dockerfile -t ghcr.io/kontentwave/statuswatch-web:mod backend
+# or reuse the latest edge build locally
+docker tag ghcr.io/kontentwave/statuswatch-web:edge ghcr.io/kontentwave/statuswatch-web:mod
+```
+
+2. **Start the isolated services** (API/worker/beat + dedicated Postgres/Redis/volumes):
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml up -d mod_db mod_redis mod_api mod_worker mod_beat
+```
+
+Logs (for quick health checks):
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml logs -f mod_api
+```
+
+3. **Apply migrations inside the modular DB:**
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py migrate_schemas --shared
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py migrate_schemas
+```
+
+4. **Create a tenant + user for testing:**
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml exec -it mod_api python manage.py shell
+```
+
+```python
+from tenants.models import Client, Domain
+tenant = Client(schema_name="acme", name="Acme Inc."); tenant.save()
+Domain(domain="acme.localhost", tenant=tenant, is_primary=True).save()
+```
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api \
+  python manage.py create_tenant_superuser --schema=acme --email admin@acme.localhost
+```
+
+5. **Point the frontend at the modular API:**
+
+- Ensure `/etc/hosts` contains `127.0.0.1 acme.localhost` so the hostname resolves locally.
+- In `frontend/.env.development.local`, set `VITE_BACKEND_ORIGIN=http://acme.localhost:8081` (remove/comment later to revert to the proxyed stack).
+- Restart Vite (`npm run dev`) and browse `https://acme.localhost:5173` to exercise the modular backend.
+
+6. **Tear down when finished:**
+
+```bash
+docker compose -f compose.yaml -f docker-compose.mod.yml down
+```
+
+This process keeps the legacy stack untouched while giving the refactor a realistic environment (own DB, Redis, logs, and image tag). Re-run steps 1–4 whenever you change backend code or need a clean database for testing. Steps 5–6 are reversible toggles for frontend routing.
+
+#### Milestone M1 – Tenant/Auth foundation _(testable)_
+
+**Goal:** carve out the first reusable modules without regressing existing behaviour. The milestone is complete only if all listed tests pass against the modular compose stack (`docker-compose.mod.yml`).
+
+1. **Module scaffolding** ✅
+
+- Create `modules/core/`, `modules/tenancy/`, and `modules/accounts/` packages.
+- Extract service objects (`TenantProvisioner`, `TenantDomainService`, `TenantAuthService`) that wrap the current management logic.
+- Add direct module tests: `backend/tests/test_modules_tenant_provisioner.py` and `backend/tests/test_modules_tenant_auth_service.py` cover provisioning payloads and auth delegation.
+- Acceptance tests run on Nov 14, 2025:
+  - `pytest backend/tests/test_modules_tenant_provisioner.py backend/tests/test_registration.py`
+  - `pytest backend/tests/test_modules_tenant_auth_service.py backend/tests/test_multi_tenant_auth.py`
+  - Full suite (`pytest`) → **278 passed, 4 skipped** (skips are known long-running diagnostics).
+
+2. **Settings + URLs centralization**
+
+- Move shared `INSTALLED_APPS`, middleware, and URL routers into `modules/core/settings.py` and `modules/core/urls.py`.
+- `app/settings.py` only wires env-specific overrides.
+- Acceptance test: `python backend/manage.py check` succeeds inside the mod API container.
+
+3. **Auth refresh alignment** ✅
+
+- `MultiTenantTokenRefreshView` now delegates all work to `TenantAuthService.refresh_tokens`, which centralizes the SimpleJWT calls and keeps schema switching logic in one place.
+- The service blacklists/rotates refresh tokens inside the current schema, rolls back broken transactions, and exposes timing/audit hooks; the view records every attempt via `AuditEvent.TOKEN_REFRESH` plus a `PerformanceMonitor` block.
+- Tests executed on Nov 15, 2025:
+  ```bash
+  cd backend
+  pytest tests/test_token_refresh.py tests/test_jwt_rotation.py -q
+  ```
+- Manual verification: `curl -X POST http://acme.localhost:8081/api/auth/token/refresh/ -d '{"refresh":"<token>"}' -H "Content-Type: application/json"` against the mod stack to confirm responses and logging.
+
+4. **Document + rollback plan**
+
+- Update this sheet with the migration steps and rollback command (`git revert <commit>` + `docker compose -f docker-compose.mod.yml down -v`).
+- Acceptance test: documentation PR reviewed; `StatusWatch_project_sheet.md` reflects the above steps before merging `refactor/mod-monolith`.
+
+#### Milestone M2 – Monitoring & Billing module migration _(in flight)_
+
+**Goal:** move monitoring (`backend/monitors`) and billing (`backend/payments`) functionality into dedicated `modules/` packages with shared DTO/serializer contracts, while keeping the SPA/API contracts and Celery schedules stable. Milestone completes when the modular stack passes all monitoring+billing acceptance tests and the new DTO layer is consumed on both backend and frontend.
+
+1. **Shared DTO + serializer layer**
+
+- [x] Create `backend/modules/monitoring/dto.py` and `backend/modules/billing/dto.py` with dataclasses mirroring `EndpointDto` (`frontend/src/lib/endpoint-client.ts`) and the billing response interfaces (`frontend/src/lib/billing-client.ts`).
+- [x] Wrap existing DRF serializers (`backend/monitors/serializers.py` and future billing serializers) so both legacy apps and new modules use identical validation logic.
+- [x] Add serializer-focused unit tests plus mypy coverage to guarantee DTO parity before relocating any views.
+
+2. **Monitoring module extraction**
+
+- [x] Relocate `Endpoint` model + Celery orchestration into `backend/modules/monitoring/{models,tasks,scheduler}.py`, leaving thin wrappers inside `backend/monitors/` that simply import and delegate (keeps `monitors.tasks.schedule_endpoint_checks` import path alive until cutover).
+- [x] DRF serializer + view logic now sit in `modules/monitoring/serializers.py` and `modules/monitoring/service.py`; the legacy `monitors/serializers.py` + `monitors/views.py` files just re-export and delegate.
+- [x] `monitors.views.ping_endpoint` re-exports the Celery task so existing monkeypatches (`monitors.views.ping_endpoint.delay`) keep functioning during the migration.
+- [x] Encapsulate `_is_endpoint_due`, tenant iteration, and logging/audit hooks inside a scheduler service; expose pure functions to simplify unit tests (mock `Client` + `Endpoint`).
+- [ ] Update `CELERY_BEAT_SCHEDULE` only after wrappers land and tests prove the module path works. Target command set:
+
+```bash
+pytest backend/tests/test_endpoints_api.py backend/tests/test_scheduler.py backend/tests/test_ping_tasks.py -q
+pytest backend/tests/test_monitoring_scheduler_service.py -q  # new deterministic tests
+```
+
+- Re-run `celery -A app beat -l info` inside the mod stack to verify tasks still register under `monitors.schedule_endpoint_checks` before changing to `modules.monitoring.tasks.schedule_endpoint_checks`.
+- Added regression tests:
+
+  - `backend/tests/test_monitors_tasks_module.py` ensures `monitors.tasks` keeps exposing `requests` and `_is_endpoint_due` for legacy callers.
+  - `backend/tests/test_celery_tasks.py` asserts `monitors.tasks.schedule_endpoint_checks` stays registered with the Celery app, protecting the beat schedule during refactors.
+  - Recommended smoke suite (documented in `README.md`):
+
+    ```bash
+    cd backend
+    pytest tests/test_monitors_tasks_module.py tests/test_ping_tasks.py tests/test_celery_tasks.py
+    ```
+
+    Run this whenever monitoring code moves between `monitors/` and `modules/monitoring/` to guarantee parity.
+
+3. **Billing module extraction**
+
+- [x] Consolidate Stripe config, checkout, portal, cancellation, and webhook logic inside `modules/billing/views.py` (canonical implementation) while `payments/views.py` re-exports the module API plus audit helpers for legacy patches.
+- [x] Keep routing centralized via `modules/core/urls.py` so `/api/pay/` and `/api/billing/` continue to work in both public and tenant stacks; `payments/urls.py` + `payments/billing_urls.py` now proxy `modules/billing/urls.py`.
+- [x] Add `_resolve_frontend_base_url` coverage + Stripe client wrappers in the module tests.
+- [x] Acceptance commands (run against modular compose stack):
+
+```bash
+pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_webhooks.py backend/tests/test_billing_cancellation.py -q
+```
+
+- [x] Manual smoke: call `POST /api/billing/create-checkout-session/`, `create-portal-session/`, `cancel/` via curl against `acme.localhost:8081` to confirm audit logging still flows (`logs/payments*.log`).
+- [x] Router smoke in tenant stack (`python -m pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_cancellation.py backend/tests/test_billing_webhooks.py -q`) executed on Nov 16, 2025.
+
+4. **Frontend alignment & regression tests** ✅
+
+- `frontend/src/types/api.ts` now re-exports every monitoring/billing DTO plus shared auth shapes (`SubscriptionPlan`, `CurrentUserResponse`). Billing pages (`Billing.tsx`, `BillingSuccess.tsx`, `BillingCancel.tsx`), the subscription store, and `frontend/src/lib/api.ts` consume these barrel exports so React surfaces no longer import types straight from `@/lib/billing-client`.
+- Confirmed no duplicate DTO definitions linger in billing/subscription loggers or stores; only the client module owns response contracts.
+- Targeted Vitest run covered the full billing suite after the refactor:
+
+  ```bash
+  cd frontend
+  npm run test -- Billing
+  ```
+
+  Output: 4 files, 16 tests passing (`BillingPage`, `BillingSuccessPage`, `BillingCancelPage`, and `lib/billing-client` contract specs) in ~4.7s.
+
+- Dashboard/endpoint surfaces already consume the same barrel for monitoring DTOs, so both billing and monitoring React entry points are decoupled from client implementations.
+
+5. **Done criteria & rollback**
+
+- [x] All tests above pass against the modular compose stack; Stripe smoke tests succeed using test keys.
+  - [x] Celery beat logs show `Endpoint scheduler run completed` coming from the new module path (validated Nov 16, 2025 @ 18:24 UTC after manual trigger via `monitors.tasks.schedule_endpoint_checks.delay()` and observing `mod_beat` + `mod_worker` logs).
+- [x] Docs updated: this sheet + new ADR outlining DTO strategy and module boundaries.
+- [x] Rollback: revert the module commits and redeploy the previous `monitors`/`payments` apps (wrappers ensure import parity, so reverting is a standard `git revert` plus `docker compose -f docker-compose.mod.yml down -v`).
+
+#### Celery smoke verification checklist _(new)_
+
+Run these steps in the modular stack whenever monitoring code moves or before declaring M2 complete:
+
+1. `docker compose -f compose.yaml -f docker-compose.mod.yml up -d mod_api mod_worker mod_beat`
+2. Tail beat logs: `docker compose -f compose.yaml -f docker-compose.mod.yml logs --tail 50 mod_beat`
+3. Tail worker logs: `docker compose -f compose.yaml -f docker-compose.mod.yml logs --tail 50 mod_worker`
+4. Trigger manual tick (optional): `docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py shell -c "from monitors.tasks import schedule_endpoint_checks; schedule_endpoint_checks.delay()"`
+5. Verify log lines show `monitors.tasks.schedule_endpoint_checks` (shim → module) and `Endpoint scheduler run completed` within 60s. _Last verified: Nov 16, 2025 @ 18:24 UTC (mod beat/worker logs captured in PR notes)._
+
+#### Milestone M3 – Cutover readiness _(tracking)_
+
+**Goal:** prove the modular stack can replace the legacy deployment with no behavioural drift once the remaining module work lands. We track seven readiness steps; 1–5 are now complete and verified on the mod compose stack, 6–7 stay open for the production rehearsal/cutover window.
+
+1. [x] **Parallel stack parity drills** – `docker-compose.mod.yml` + the `.env`/hosts toggle procedure above were executed repeatedly so both stacks can run side-by-side. This covers schema provisioning, tenant bootstrap, and frontend routing pointed at `http://acme.localhost:8081`.
+2. [x] **Release candidate image + config** – the `ghcr.io/kontentwave/statuswatch-web:mod` tag (built from `backend/Dockerfile`) plus the mod overlay compose targets (`mod_api`, `mod_worker`, `mod_beat`, `mod_db`, `mod_redis`) are healthy; Celery beat/worker logs from Nov 16 show the modular task paths firing without regressions.
+3. [x] **Automated + manual regression suite on mod stack** – backend suites (`pytest backend/tests/test_modules_tenant_provisioner.py ... tests/test_billing_webhooks.py`) and targeted frontend Vitest runs (`npm run test -- Billing`) now run against the mod stack as part of sign-off; latest executions hit 278 backend tests (4 skips) + 16 billing-focused frontend tests with 100% pass rate.
+4. [x] **Observability alignment** – shared logging/metrics helpers (`modules/core/settings/logger.py`, Celery beat smoke checklist) confirm audit logs, scheduler telemetry, and Stripe payment logging land in the same files as the legacy stack, so operational dashboards do not need to change at cutover.
+5. [x] **Rollback + documentation** – ADR 11 + this sheet document the rollback command (`git revert <commit>` + `docker compose -f docker-compose.mod.yml down -v`) and keep the mod-vs-legacy import shim plan visible to reviewers.
+6. [ ] **Blue/green rehearsal** – stage the modular images on `staging.statuswatch.kontentwave.digital` (same EC2 sizing) using the production compose stack plus the mod override. Checklist:
+
+- Infra prep: `git pull && dcp pull` on staging, then run `docker compose -f compose.yaml -f docker-compose.production.yml -f docker-compose.mod.yml up -d` so the mod API/worker/beat containers sit behind Caddy while the legacy stack keeps serving traffic.
+- Config sanity: run `docker compose -f compose.yaml -f docker-compose.mod.yml config >/dev/null` locally before shipping overrides; root `.env` secret was rotated on Nov 17, 2025 (`SECRET_KEY=w0AKtbA5Lo1en6QfTzkehQueadRjLUNPl1lEzk2TdHyZx_QMJJLs3Lzjq3Jn_LbJ3C8jyNsOBObeWBCxuPSupA`) specifically to eliminate `${m}` warnings, so renders should now be silent.
+- Data sync: snapshot prod with `pg_dump statuswatch > backup.sql`, restore into `statuswatch_mod` (staging) so tenant data and Stripe customer IDs match real-world cases; reload Redis keys via `redis-cli --rdb /tmp/mod.rdb` if auth states need parity.
+- Smoke + parity tests (run against `https://acme.staging.statuswatch.kontentwave.digital`):
+
+```bash
+cd backend
+pytest tests/test_endpoints_api.py tests/test_scheduler.py tests/test_billing_checkout.py -q
+
+cd ../frontend
+npm run test -- Billing Dashboard
+```
+
+- Manual checks: perform Stripe Checkout (test keys), portal session, webhook replay (`stripe trigger invoice.paid`), and confirm Celery beat emits `modules.monitoring.scheduler` lines in `logs/mod_beat.log`.
+- Success criteria: 0 failing tests, identical log output destinations (`logs/payments*.log`, `logs/statuswatch.log`), health endpoints <250ms, and ability to revert quickly with `docker compose ... down && docker compose up -d legacy`.
+
+7. [ ] **Final cutover window & comms** – change-management plan once rehearsal passes:
+
+- Schedule: 60-minute window (target Nov 19, 22:00 CET) with a 30-minute freeze beforehand; publish notice in #statuswatch-eng and customer status page 24h prior.
+- Execution steps:
+
+```bash
+# Freeze legacy deploys
+ssh ubuntu@prod "cd /opt/statuswatch && touch .deploy-freeze"
+
+# Roll out mod images
+ssh ubuntu@prod <<'EOF'
+cd /opt/statuswatch
+git pull
+dcp pull
+IMAGE_TAG=mod dcp up -d --remove-orphans
+dcp run --rm web python manage.py migrate_schemas --executor=celery
+EOF
+
+# Release frontend bundle (points to same API origin)
+ssh ubuntu@prod "cd /opt/statuswatch/django-statuswatch/frontend && npm run build && rsync -a dist/ /opt/statuswatch/frontend-dist/"
+```
+
+- Validation sequence: run health-check + db-check scripts, confirm Celery beat/worker show `modules.monitoring` task paths, execute multi-tenant login smoke, billing upgrade, and webhook loopback.
+- Comms + rollback: announce completion (or rollback) in Slack/email; if rollback needed, set `IMAGE_TAG=edge` and rerun `dcp up -d`, then re-point frontend via the previous build artifact (`frontend-dist-backup/`). Document outcomes + timestamps back in this sheet/ADR 11.

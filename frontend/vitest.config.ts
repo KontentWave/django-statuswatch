@@ -14,5 +14,7 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     globals: true,
     css: true,
+    minThreads: 1,
+    maxThreads: 1,
   },
 });

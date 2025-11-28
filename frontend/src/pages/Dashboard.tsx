@@ -11,9 +11,8 @@ import {
   createEndpoint,
   deleteEndpoint,
   listEndpoints,
-  type CreateEndpointRequest,
-  type EndpointListResponse,
 } from "@/lib/endpoint-client";
+import type { CreateEndpointRequest, EndpointListResponse } from "@/types/api";
 import { logDashboardEvent } from "@/lib/dashboard-logger";
 import { logSubscriptionEvent } from "@/lib/subscription-logger";
 import { logAuthEvent } from "@/lib/auth-logger";

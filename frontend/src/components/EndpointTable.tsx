@@ -6,7 +6,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 
-import type { EndpointDto } from "@/lib/endpoint-client";
+import type { EndpointDto } from "@/types/api";
 import { logDashboardEvent } from "@/lib/dashboard-logger";
 
 interface EndpointTableProps {

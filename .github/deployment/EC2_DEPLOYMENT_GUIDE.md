@@ -216,12 +216,14 @@ docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 
 ```
 /home/marcel/projects/statuswatch-project/
-├── compose.yaml                    # Local dev (no Caddy)
-├── docker-compose.production.yml   # Reference for EC2 base
-├── docker-compose.override.yml     # Edge tag override
-└── .github/deployment/
-    └── Caddyfile.ondemand         # Caddy config
+├── compose.yaml                                # Local dev (no Caddy)
+├── .github/deployment/
+│   ├── docker-compose.production.yml           # Source of /opt/statuswatch/docker-compose.yml
+│   ├── docker-compose.override.yml             # Source of /opt/statuswatch/docker-compose.override.yml
+│   └── Caddyfile.ondemand                      # Caddy config synced to EC2
 ```
+
+> Copy the two compose files from `.github/deployment/` whenever you update infrastructure, e.g. `cp .github/deployment/docker-compose.production.yml /opt/statuswatch/docker-compose.yml`.
 
 ### On EC2 Server
 

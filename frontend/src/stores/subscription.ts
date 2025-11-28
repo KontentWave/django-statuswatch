@@ -1,8 +1,7 @@
 import { create } from "zustand";
 
 import { logSubscriptionEvent } from "@/lib/subscription-logger";
-
-export type SubscriptionPlan = "free" | "pro" | "canceled";
+import type { SubscriptionPlan } from "@/types/api";
 
 interface SubscriptionState {
   plan: SubscriptionPlan;
@@ -45,3 +44,5 @@ export const useSubscriptionStore = create<SubscriptionState>((set) => ({
 
 export const resetSubscriptionStore = () =>
   useSubscriptionStore.getState().reset();
+
+export type { SubscriptionPlan };

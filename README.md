@@ -118,6 +118,17 @@ This project includes a **complete production deployment** on AWS EC2:
 - **Frontend built separately** and served from host filesystem
 - **5 operational diagnostic scripts** for production monitoring
 
+Compose overrides live under `.github/deployment/`:
+
+- `.github/deployment/docker-compose.production.yml` — merges with `compose.yaml` for EC2
+- `.github/deployment/docker-compose.override.yml` — pins the `edge` tag for web/worker/beat during deploys
+
+Use them with:
+
+```bash
+docker compose -f compose.yaml -f .github/deployment/docker-compose.production.yml up -d
+```
+
 👉 **See:** [`.github/deployment/EC2_DEPLOYMENT_GUIDE.md`](.github/deployment/EC2_DEPLOYMENT_GUIDE.md)
 
 ### Emergency Diagnostic Scripts
@@ -200,6 +211,14 @@ python manage.py makemigrations
 python manage.py migrate_schemas --shared  # Public schema
 python manage.py migrate_schemas           # All tenant schemas
 ```
+
+**Monitoring smoke check:**
+
+```bash
+pytest tests/test_monitors_tasks_module.py tests/test_ping_tasks.py
+```
+
+Run this focused command whenever you touch `monitors.tasks` or the Celery monitoring pipeline to quickly ensure the re-export contract and ping workflow still pass.
 
 ### Frontend
 

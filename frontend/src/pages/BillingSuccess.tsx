@@ -6,10 +6,8 @@ import { logBillingEvent } from "@/lib/billing-logger";
 import { consumeCheckoutPlan } from "@/lib/billing-storage";
 import { fetchCurrentUser } from "@/lib/api";
 import { logSubscriptionEvent } from "@/lib/subscription-logger";
-import {
-  useSubscriptionStore,
-  type SubscriptionPlan,
-} from "@/stores/subscription";
+import { useSubscriptionStore } from "@/stores/subscription";
+import type { SubscriptionPlan } from "@/types/api";
 
 function formatPlanLabel(plan: string): string {
   if (!plan || plan === "unknown") {

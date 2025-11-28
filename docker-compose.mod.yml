@@ -1,0 +1,108 @@
+# Parallel modular-monolith stack overlay
+# Usage: docker compose -f compose.yaml -f docker-compose.mod.yml up mod_api mod_worker mod_beat
+# This keeps the original stack untouched by running isolated services with their own ports,
+# databases, Redis instance, and log directories.
+
+services:
+  mod_db:
+    image: postgres:16
+    container_name: statuswatch_mod_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpass
+      POSTGRES_DB: statuswatch_mod
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d statuswatch_mod"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./.mod-data/postgres:/var/lib/postgresql/data
+
+  mod_redis:
+    image: redis:7
+    container_name: statuswatch_mod_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./.mod-data/redis:/data
+
+  mod_api:
+    image: ghcr.io/kontentwave/statuswatch-web:mod
+    container_name: statuswatch_mod_api
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8081:8000"
+    depends_on:
+      mod_db:
+        condition: service_healthy
+      mod_redis:
+        condition: service_healthy
+    env_file:
+      - backend/.env.mod
+    environment:
+      DJANGO_ENV: development
+      DATABASE_URL: postgresql://postgres:devpass@mod_db:5432/statuswatch_mod
+      REDIS_URL: redis://mod_redis:6379/0
+      CELERY_BROKER_URL: redis://mod_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://mod_redis:6379/1
+      LOG_TO_FILE: "1"
+    volumes:
+      - ./logs/mod:/app/logs
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "wget -qO- http://localhost:8000/health/ >/dev/null || exit 1"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mod_worker:
+    image: ghcr.io/kontentwave/statuswatch-web:mod
+    container_name: statuswatch_mod_worker
+    command: celery -A app worker -l info
+    depends_on:
+      mod_db:
+        condition: service_healthy
+      mod_redis:
+        condition: service_healthy
+    env_file:
+      - backend/.env.mod
+    environment:
+      DJANGO_ENV: development
+      DATABASE_URL: postgresql://postgres:devpass@mod_db:5432/statuswatch_mod
+      REDIS_URL: redis://mod_redis:6379/0
+      CELERY_BROKER_URL: redis://mod_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://mod_redis:6379/1
+      LOG_TO_FILE: "1"
+    volumes:
+      - ./logs/mod:/app/logs
+
+  mod_beat:
+    image: ghcr.io/kontentwave/statuswatch-web:mod
+    container_name: statuswatch_mod_beat
+    command: celery -A app beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      mod_db:
+        condition: service_healthy
+      mod_redis:
+        condition: service_healthy
+    env_file:
+      - backend/.env.mod
+    environment:
+      DJANGO_ENV: development
+      DATABASE_URL: postgresql://postgres:devpass@mod_db:5432/statuswatch_mod
+      REDIS_URL: redis://mod_redis:6379/0
+      CELERY_BROKER_URL: redis://mod_redis:6379/0
+      CELERY_RESULT_BACKEND: redis://mod_redis:6379/1
+      LOG_TO_FILE: "1"
+    volumes:
+      - ./logs/mod:/app/logs

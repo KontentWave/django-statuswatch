@@ -34,7 +34,7 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip_glob = ["*/migrations/*", "*/node_modules/*", "*/.venv/*"]
-known_first_party = ["api", "app", "tenants", "payments"]
+known_first_party = ["api", "app", "tenants", "payments", "modules"]
 known_django = ["django", "rest_framework"]
 sections = ["FUTURE", "STDLIB", "DJANGO", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
 

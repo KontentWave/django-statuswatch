@@ -181,11 +181,10 @@ def metrics(request):
         },
     )
 
+    sentry_environment = getattr(settings, "SENTRY_ENVIRONMENT", None)
     metrics_data = {
         "timestamp": timezone.now().isoformat(),
-        "environment": (
-            settings.SENTRY_ENVIRONMENT if hasattr(settings, "SENTRY_ENVIRONMENT") else "unknown"
-        ),
+        "environment": sentry_environment or "unknown",
         "debug": settings.DEBUG,
     }
 
