@@ -1456,6 +1456,7 @@ StatusWatch is successfully deployed on EC2 with proper multi-tenant domain conf
 - **[Deployment Guide](../deployment/EC2_DEPLOYMENT_GUIDE.md)** - Complete EC2 setup
 - **[ADR 08: Deployment](ADRs/Phase%202/08-deployment.md)** - Architecture decisions
 - **[ADR 11: Shared Settings Router & Logging Helper](ADRs/Phase%203%20Refactor%20to%20Modular%20Monolith/11-shared-settings-router.md)** - Environment routing + logging consolidation
+- **[ADR 12: Modular Stack Cutover & Tenant Domain Cleanup](ADRs/Phase%203%20Refactor%20to%20Modular%20Monolith/12-mod-stack-cutover.md)** - Parallel stack adoption + tenant-domain fix
 - **[Diagnostic Scripts](../deployment/diag-scripts/README.md)** - Production monitoring tools
 - **[All ADRs](ADRs/)** - Architecture decision records
 
