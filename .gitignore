@@ -32,6 +32,9 @@ frontend/.env
 frontend/.env.*
 !frontend/.env.example
 frontend/logs
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
 *.tsbuildinfo
 
 # Vite env files (keep secrets out of git)

@@ -210,6 +210,7 @@ mypy .
 python manage.py makemigrations
 python manage.py migrate_schemas --shared  # Public schema
 python manage.py migrate_schemas           # All tenant schemas
+python manage.py reset_e2e_data            # Clean tenant data for E2E runs (DEBUG only)
 ```
 
 **Monitoring smoke check:**
@@ -235,6 +236,29 @@ npm run lint
 # Format
 npm run format
 ```
+
+### End-to-End Tests (Playwright)
+
+Playwright lives under `frontend/e2e/` and exercises the `/register → /login` flow end-to-end.
+
+```bash
+# Terminal 1 – backend API (ensure Postgres/Redis running)
+cd backend && python manage.py runserver 0.0.0.0:8000
+
+# Terminal 2 – frontend dev server
+cd frontend && npm run dev
+
+# Terminal 3 – Playwright tests (resets tenant data automatically)
+cd frontend && npm run test:e2e
+```
+
+Notes:
+
+- `frontend/e2e/global-setup.ts` invokes `python manage.py reset_e2e_data --force` before the test suite so every run starts from a blank slate.
+- Set `PLAYWRIGHT_BASE_URL` to override the default `http://localhost:5173` or `PLAYWRIGHT_SKIP_RESET=1` if you need to retain data between runs.
+- Additional scripts:
+  - `npm run test:e2e:headed` – debug in headed mode with a single worker
+  - `npm run test:e2e:report` – open the last HTML report
 
 ---
 
@@ -275,4 +299,4 @@ Built with modern best practices for:
 ---
 
 **Maintained by:** [KontentWave](https://github.com/KontentWave)  
-**Last Updated:** November 13, 2025
+**Last Updated:** December 1, 2025

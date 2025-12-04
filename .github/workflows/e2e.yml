@@ -1,0 +1,113 @@
+name: Playwright E2E
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  e2e:
+    name: Playwright Registration Flow
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: compose.yaml:docker-compose.mod.yml
+      COMPOSE_PROJECT_NAME: statuswatch-e2e
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps
+
+      - name: Ensure backend env files exist
+        run: |
+          if [ ! -f backend/.env ]; then
+            cp backend/.env.example backend/.env
+          fi
+          if [ ! -f backend/.env.mod ]; then
+            cp backend/.env.mod.example backend/.env.mod
+          fi
+
+      - name: Pull backend images
+        run: docker compose pull mod_api mod_worker mod_beat
+
+      - name: Start core services (mod_db, mod_redis)
+        run: docker compose up -d mod_db mod_redis
+
+      - name: Run database migrations
+        run: docker compose run --rm mod_api python manage.py migrate --noinput
+
+      - name: Reset E2E data
+        run: docker compose run --rm mod_api python manage.py reset_e2e_data --force
+
+      - name: Start backend services
+        run: docker compose up -d mod_api mod_worker mod_beat
+
+      - name: Wait for backend health
+        run: |
+          for i in {1..40}; do
+            if curl -sf http://localhost:8081/api/ping/ >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Backend never became ready" >&2
+          docker compose logs mod_api
+          exit 1
+
+      - name: Start Vite dev server
+        working-directory: frontend
+        run: |
+          nohup npm run dev -- --host 0.0.0.0 --port 5173 --strict-port \
+            >/tmp/vite-dev.log 2>&1 &
+          echo $! > /tmp/vite-dev.pid
+          # give the dev server a moment to boot
+          sleep 8
+
+      - name: Run Playwright tests
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_SKIP_RESET: "1"
+          VITE_DEV_SERVER_URL: http://127.0.0.1:5173
+        run: npx playwright test
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+      - name: Stop Vite dev server
+        if: always()
+        run: |
+          if [ -f /tmp/vite-dev.pid ]; then
+            kill "$(cat /tmp/vite-dev.pid)" >/dev/null 2>&1 || true
+          fi
+          if [ -f /tmp/vite-dev.log ]; then
+            echo "--- Vite dev server log ---"
+            tail -n 200 /tmp/vite-dev.log || true
+          fi
+
+      - name: Stop docker compose stack
+        if: always()
+        run: docker compose down -v

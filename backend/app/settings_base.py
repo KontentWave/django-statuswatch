@@ -191,6 +191,9 @@ ADMIN_URL = env("ADMIN_URL", default="admin/")
 # -------------------------------------------------------------------
 REST_FRAMEWORK = build_rest_framework_config()
 
+# Feature flag to disable DRF throttling in selected environments
+API_RATE_LIMITING_ENABLED = env.bool("API_RATE_LIMITING_ENABLED", default=True)
+
 # -------------------------------------------------------------------
 # JWT Configuration
 # -------------------------------------------------------------------

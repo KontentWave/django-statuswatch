@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 *.tsbuildinfo
+playwright-report
+test-results
+blob-report
+.playwright
 
 # Environment variables
 .env

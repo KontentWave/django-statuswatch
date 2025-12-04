@@ -1719,3 +1719,55 @@ ssh ubuntu@prod "cd /opt/statuswatch/django-statuswatch/frontend && npm run buil
 
 - Validation sequence: run health-check + db-check scripts, confirm Celery beat/worker show `modules.monitoring` task paths, execute multi-tenant login smoke, billing upgrade, and webhook loopback.
 - Comms + rollback: announce completion (or rollback) in Slack/email; if rollback needed, set `IMAGE_TAG=edge` and rerun `dcp up -d`, then re-point frontend via the previous build artifact (`frontend-dist-backup/`). Document outcomes + timestamps back in this sheet/ADR 11.
+
+### 10. Comprehensive End-to-End (E2E) Testing
+
+- **Action:** Implement an automated E2E suite using **Playwright**. Phase 1 ships a registration-only POC to validate the tooling and CI plumbing; later phases expand to the full auth/tenancy/billing critical path.
+- **Test Plan:**
+  - **Scope (Phase 1 POC):** Exercise the happy-path registration scenario described in `1_registration.feature` (fill out `/register`, submit, verify redirect + success toast). Track future scenarios (smart login, monitors CRUD, billing flows) but keep them out of scope until Playwright + CI prove stable.
+  - **Execution:** Tests run against the local Docker environment (`localhost`) during development and in GitHub Actions via a dedicated Playwright workflow. Future phases can reuse the same harness against the modular stack once coverage increases.
+
+#### **Frontend/E2E Tasks (Playwright)**
+
+- **Setup & Configuration:**
+  - Initialize Playwright within the `frontend` directory: `npm init playwright@latest`.
+  - Configure `playwright.config.ts`:
+    - Base URL: `http://localhost:5173` (or the local dev URL).
+    - Trace Viewer: Enable `on-first-retry` for debugging CI failures.
+    - Projects: Configure standard browsers (Chromium, Firefox, WebKit).
+- **Page Object Models (POM):**
+  - Create `e2e/pages/` to abstract UI interactions.
+  - For the POC, only `AuthPage` is required (`register(org, email, pass)` helpers). `DashboardPage` and `BillingPage` stubs can be scaffolded but implemented later.
+- **Test Scenarios (Specs):**
+  - **Phase 1 (in scope):**
+    - `auth.spec.ts` – registration happy path aligned with `1_registration.feature` (new visitor, form submit, redirect to `/login`, success banner).
+  - **Future additions (out of scope for the POC, keep tracked for later milestones):**
+    - Smart login tenant selection / isolation checks.
+    - Monitors CRUD + validation/error surfaces.
+    - Billing gating, checkout redirect assertions, Stripe-state simulation.
+
+#### **Backend Tasks (Test Support)**
+
+- **Test Data Management:**
+  - Create a lightweight management command (e.g., `python manage.py reset_e2e_data`) that flushes the database back to an empty state so the registration flow always starts from a blank slate. Future iterations can grow this to seed tenants/users for broader scenarios.
+- **Email Testing:**
+  - Development already uses the console email backend; no verification UI exists yet, so the POC simply asserts the redirect/flash message. When email verification ships, revisit the DEBUG-only helper endpoint recommendation to expose the latest verification link for Playwright.
+
+#### **CI/CD Tasks (GitHub Actions)**
+
+- Create `.github/workflows/e2e.yml`.
+- **Workflow Steps:**
+  1.  Checkout code.
+  2.  Start the Backend & Database (Docker Compose).
+  3.  Start the Frontend (Vite in preview/dev mode).
+  4.  Run `python manage.py reset_e2e_data`.
+  5.  Run `npx playwright test`.
+  6.  **Artifacts:** Upload Playwright Traces and Screenshots on failure.
+
+#### **Implementation Notes**
+
+- Phase 1 focuses on plumbing (Playwright config, CI workflow, `reset_e2e_data`). Keep assertions tight around the registration UX so we can iterate quickly.
+- `reset_e2e_data` now lives at `backend/api/management/commands/reset_e2e_data.py`; it drops every tenant schema (keeping `public`), removes orphan domains, and guards execution behind `DEBUG`/`--force`.
+- `frontend/playwright.config.ts` boots Playwright with Chromium/Firefox/WebKit, `trace: on-first-retry`, and a global setup hook (`frontend/e2e/global-setup.ts`) that runs the management command automatically unless `PLAYWRIGHT_SKIP_RESET=1`.
+- The registration POC lives at `frontend/e2e/specs/auth.spec.ts` and uses the `AuthPage` page object (`frontend/e2e/pages/auth-page.ts`) plus `buildRegistrationInput()` helper (`frontend/e2e/support/registration-data.ts`) to keep selectors/data DRY.
+- As more flows come online, reuse the same harness to add specs for smart login, monitors CRUD, and billing. At that stage reintroduce the Stripe-handling guidance (redirect check + mocked webhook) and storageState optimization noted above.

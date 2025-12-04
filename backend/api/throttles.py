@@ -4,10 +4,24 @@ Custom throttling classes for API rate limiting.
 Protects against spam, DoS attacks, and automated abuse.
 """
 
+from django.conf import settings
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 
-class RegistrationRateThrottle(AnonRateThrottle):
+class RateLimitingToggleMixin:
+    """Bypass throttles entirely when rate limiting is disabled in settings."""
+
+    @staticmethod
+    def _is_enabled() -> bool:
+        return getattr(settings, "API_RATE_LIMITING_ENABLED", True)
+
+    def allow_request(self, request, view):  # type: ignore[override]
+        if not self._is_enabled():
+            return True
+        return super().allow_request(request, view)
+
+
+class RegistrationRateThrottle(RateLimitingToggleMixin, AnonRateThrottle):
     """
     Strict rate limit for user registration endpoint.
 
@@ -25,7 +39,7 @@ class RegistrationRateThrottle(AnonRateThrottle):
     scope = "registration"
 
 
-class LoginRateThrottle(AnonRateThrottle):
+class LoginRateThrottle(RateLimitingToggleMixin, AnonRateThrottle):
     """
     Rate limit for login attempts.
 
@@ -43,7 +57,7 @@ class LoginRateThrottle(AnonRateThrottle):
     scope = "login"
 
 
-class BurstRateThrottle(AnonRateThrottle):
+class BurstRateThrottle(RateLimitingToggleMixin, AnonRateThrottle):
     """
     Short-term burst protection for anonymous users.
 
@@ -61,7 +75,7 @@ class BurstRateThrottle(AnonRateThrottle):
     scope = "burst"
 
 
-class SustainedRateThrottle(AnonRateThrottle):
+class SustainedRateThrottle(RateLimitingToggleMixin, AnonRateThrottle):
     """
     Long-term rate limit for anonymous users.
 
@@ -79,7 +93,7 @@ class SustainedRateThrottle(AnonRateThrottle):
     scope = "sustained"
 
 
-class AuthenticatedUserRateThrottle(UserRateThrottle):
+class AuthenticatedUserRateThrottle(RateLimitingToggleMixin, UserRateThrottle):
     """
     Rate limit for authenticated users.
 
@@ -97,7 +111,7 @@ class AuthenticatedUserRateThrottle(UserRateThrottle):
     scope = "user"
 
 
-class BillingRateThrottle(UserRateThrottle):
+class BillingRateThrottle(RateLimitingToggleMixin, UserRateThrottle):
     """
     Strict rate limit for billing/checkout endpoints.
 

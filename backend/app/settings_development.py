@@ -14,11 +14,15 @@ from modules.core.settings import (
 )
 
 from app.settings_base import *  # noqa: F403, F401
+from app.settings_base import env  # noqa: F401
 
 # -------------------------------------------------------------------
 # Core Development Settings
 # -------------------------------------------------------------------
 DEBUG = True
+
+# Disable DRF throttling for local development to keep test runs fast
+API_RATE_LIMITING_ENABLED = env.bool("API_RATE_LIMITING_ENABLED", default=False)
 
 # Required for JWT signing
 SECRET_KEY = env(  # noqa: F405
