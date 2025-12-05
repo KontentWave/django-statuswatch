@@ -21,8 +21,12 @@ from app.settings_base import env  # noqa: F401
 # -------------------------------------------------------------------
 DEBUG = True
 
-# Disable DRF throttling for local development to keep test runs fast
-API_RATE_LIMITING_ENABLED = env.bool("API_RATE_LIMITING_ENABLED", default=False)
+# Disable DRF throttling for local development to keep test runs fast.
+# CI (and pytest) still see throttles unless explicitly disabled via env.
+API_RATE_LIMITING_ENABLED = env.bool(
+    "API_RATE_LIMITING_ENABLED",
+    default=env.bool("CI", default=False),
+)
 
 # Required for JWT signing
 SECRET_KEY = env(  # noqa: F405

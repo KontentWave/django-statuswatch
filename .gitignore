@@ -9,6 +9,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!backend/.env.example
 !backend/.env.mod
 !backend/.env.mod.example
 .mod-data/
