@@ -36,7 +36,7 @@ services:
       - ./.mod-data/redis:/data
 
   mod_api:
-    image: ghcr.io/kontentwave/statuswatch-web:mod
+    image: ghcr.io/kontentwave/statuswatch-web:edge
     container_name: statuswatch_mod_api
     command: python manage.py runserver 0.0.0.0:8000
     ports:
@@ -66,7 +66,7 @@ services:
       retries: 5
 
   mod_worker:
-    image: ghcr.io/kontentwave/statuswatch-web:mod
+    image: ghcr.io/kontentwave/statuswatch-web:edge
     container_name: statuswatch_mod_worker
     command: celery -A app worker -l info
     depends_on:
@@ -87,7 +87,7 @@ services:
       - ./logs/mod:/app/logs
 
   mod_beat:
-    image: ghcr.io/kontentwave/statuswatch-web:mod
+    image: ghcr.io/kontentwave/statuswatch-web:edge
     container_name: statuswatch_mod_beat
     command: celery -A app beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     depends_on:
