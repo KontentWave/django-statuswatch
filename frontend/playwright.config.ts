@@ -12,11 +12,17 @@ const workspaceRoot = path.resolve(__dirname, "..");
 const backendDir = path.join(workspaceRoot, "backend");
 const e2eBackendPort = Number(process.env.PLAYWRIGHT_BACKEND_PORT ?? "18081");
 const e2eFrontendPort = Number(process.env.PLAYWRIGHT_FRONTEND_PORT ?? "4173");
+const externalBaseUrl = process.env.VITE_DEV_SERVER_URL;
+const shouldManageWebServers = !externalBaseUrl;
 
 const defaultBaseURL = (() => {
   const explicitBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
   if (explicitBaseUrl) {
     return explicitBaseUrl;
+  }
+
+  if (externalBaseUrl) {
+    return externalBaseUrl;
   }
 
   return `http://localhost:${e2eFrontendPort}`;
@@ -39,22 +45,24 @@ export default defineConfig({
   timeout: 90_000,
   expect: { timeout: 10_000 },
   globalSetup: path.join(__dirname, "e2e", "global-setup.ts"),
-  webServer: [
-    {
-      command: `DJANGO_ENV=development API_RATE_LIMITING_ENABLED=0 python manage.py runserver 0.0.0.0:${e2eBackendPort}`,
-      cwd: backendDir,
-      port: e2eBackendPort,
-      reuseExistingServer: false,
-      timeout: 120_000,
-    },
-    {
-      command: `VITE_SSL_CERT= VITE_SSL_KEY= VITE_PROXY_TARGET_PORT=${e2eBackendPort} npm run dev -- --host 0.0.0.0 --port ${e2eFrontendPort}`,
-      cwd: __dirname,
-      port: e2eFrontendPort,
-      reuseExistingServer: false,
-      timeout: 120_000,
-    },
-  ],
+  webServer: shouldManageWebServers
+    ? [
+        {
+          command: `DJANGO_ENV=development API_RATE_LIMITING_ENABLED=0 python manage.py runserver 0.0.0.0:${e2eBackendPort}`,
+          cwd: backendDir,
+          port: e2eBackendPort,
+          reuseExistingServer: false,
+          timeout: 120_000,
+        },
+        {
+          command: `VITE_SSL_CERT= VITE_SSL_KEY= VITE_PROXY_TARGET_PORT=${e2eBackendPort} npm run dev -- --host 0.0.0.0 --port ${e2eFrontendPort}`,
+          cwd: __dirname,
+          port: e2eFrontendPort,
+          reuseExistingServer: false,
+          timeout: 120_000,
+        },
+      ]
+    : undefined,
   use: {
     baseURL,
     ignoreHTTPSErrors: true, // self-signed dev certs
