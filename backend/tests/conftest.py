@@ -13,6 +13,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from django.core.cache import cache
 from psycopg import sql
 
 try:  # pragma: no cover - dependency availability check
@@ -585,8 +586,20 @@ def reset_schema_between_tests(db, ensure_test_tenant):
     # Start in public schema
     _ensure_connection_ready()
     connection.set_schema_to_public()
+
+
+@pytest.fixture(autouse=True)
+def isolate_rate_limiting(settings, request):
+    """Disable throttling for ordinary tests and clear cached throttle state."""
+
+    if request.node.fspath.basename != "test_rate_limiting.py":
+        settings.API_RATE_LIMITING_ENABLED = False
+
+    cache.clear()
     yield
-    # Return to public schema for next test
+    cache.clear()
+
+    # Return to public schema for next test.
     _ensure_connection_ready()
     connection.set_schema_to_public()
 
