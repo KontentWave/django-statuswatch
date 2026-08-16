@@ -68,6 +68,8 @@ test: ## Run all tests
 	cd backend && python -m pytest
 	@echo "$(GREEN)Running frontend tests...$(RESET)"
 	cd frontend && npm test -- --run
+	@echo "$(GREEN)Running end-to-end tests...$(RESET)"
+	cd frontend && npx playwright test
 	@echo "$(GREEN)All tests passed!$(RESET)"
 
 test-backend: ## Run backend tests only
