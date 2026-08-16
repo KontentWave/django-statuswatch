@@ -450,10 +450,10 @@ ALLOWED_HOSTS=*.statuswatch.kontentwave.digital,statuswatch.kontentwave.digital
 CSRF_TRUSTED_ORIGINS=https://*.statuswatch.kontentwave.digital,https://statuswatch.kontentwave.digital
 
 # Stripe
-STRIPE_PUBLIC_KEY=pk_live_xxx
-STRIPE_SECRET_KEY=sk_live_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRO_PRICE_ID=price_xxx
+STRIPE_PUBLIC_KEY=<pk_live_xxx>
+STRIPE_SECRET_KEY=<sk_live_xxx>
+STRIPE_WEBHOOK_SECRET=<whsec_xxx>
+STRIPE_PRO_PRICE_ID=<price_xxx>
 
 # Logging
 LOG_TO_FILE=1

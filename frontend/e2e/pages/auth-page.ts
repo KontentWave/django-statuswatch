@@ -12,7 +12,7 @@ export class AuthPage {
   async gotoRegister(): Promise<void> {
     await this.page.goto("/register");
     await expect(
-      this.page.getByRole("heading", { name: /create your organization/i })
+      this.page.getByRole("heading", { name: /create your organization/i }),
     ).toBeVisible();
   }
 
@@ -34,11 +34,15 @@ export class AuthPage {
   }
 
   async expectRegistrationSuccessPanel(email: string): Promise<void> {
-    const successPanel = this.page.getByTestId("registration-success");
-    await expect(successPanel).toBeVisible();
     await expect(
-      successPanel.getByText(/check your inbox/i, { exact: false })
+      this.page.getByRole("heading", { name: /check your inbox/i }),
     ).toBeVisible();
-    await expect(successPanel.getByText(email, { exact: false })).toBeVisible();
+    await expect(
+      this.page.getByText(/registration successful!/i, { exact: false }),
+    ).toBeVisible();
+    await expect(this.page.getByText(email, { exact: false })).toBeVisible();
+    await expect(
+      this.page.getByRole("button", { name: /continue to login/i }),
+    ).toBeVisible();
   }
 }

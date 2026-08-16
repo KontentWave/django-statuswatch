@@ -6,6 +6,8 @@ import type { IncomingMessage } from "node:http";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const backendPort = env.VITE_PROXY_TARGET_PORT || "8081";
+  const defaultBackendTarget = `http://localhost:${backendPort}`;
 
   // SSL certificate paths (update these to your actual paths)
   const certPath = env.VITE_SSL_CERT || "/path/to/your/cert.pem";
@@ -42,7 +44,7 @@ export default defineConfig(({ mode }) => {
       //   marcepokus.localhost:5173/api → marcepokus.localhost:8001/api
       proxy: {
         "/api": {
-          target: "http://localhost:8081", // Default fallback aligned with runserver
+          target: defaultBackendTarget,
           changeOrigin: false, // CRITICAL: Preserve Host header with tenant subdomain
           secure: false,
           // Dynamic router: extract tenant from Host header and route to correct backend
@@ -55,17 +57,17 @@ export default defineConfig(({ mode }) => {
 
             // If no subdomain (just "localhost"), route to localhost:8001
             if (hostname === "localhost") {
-              return "http://localhost:8081";
+              return defaultBackendTarget;
             }
 
             // If subdomain exists (e.g., "acme.localhost"), route to tenant backend
             if (parts.length >= 2 && parts[parts.length - 1] === "localhost") {
               const tenant = parts[0];
-              return `http://${tenant}.localhost:8081`;
+              return `http://${tenant}.localhost:${backendPort}`;
             }
 
             // Fallback for any other domain
-            return "http://localhost:8081";
+            return defaultBackendTarget;
           },
         },
       },

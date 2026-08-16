@@ -12,7 +12,7 @@ const { postMock, locationSearch, navigateMock } = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
-    "@tanstack/react-router"
+    "@tanstack/react-router",
   );
   return {
     ...actual,
@@ -27,10 +27,10 @@ vi.mock("@tanstack/react-router", async () => {
         searchStr: locationSearch.current,
         publicHref: `/verify-email${locationSearch.current}`,
         url: new URL(
-          `https://localhost:5173/verify-email${locationSearch.current}`
+          `https://localhost:5173/verify-email${locationSearch.current}`,
         ),
         state: undefined,
-      } as unknown as ReturnType<typeof actual.useLocation>),
+      }) as unknown as ReturnType<typeof actual.useLocation>,
     useNavigate: () => navigateMock,
   };
 });
@@ -65,10 +65,10 @@ describe("VerifyEmailPage", () => {
     expect(payload).toEqual({ token: "test-token" });
 
     expect(
-      await screen.findByRole("heading", { name: /email verified/i })
+      await screen.findByRole("heading", { name: /email verified/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /continue to dashboard/i })
+      screen.getByRole("button", { name: /continue to login/i }),
     ).toBeVisible();
   });
 
@@ -93,15 +93,15 @@ describe("VerifyEmailPage", () => {
       await screen.findByText(
         /verification token expired/i,
         {},
-        { timeout: 3000 }
-      )
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
 
     const resendButton = screen.getByRole("button", { name: /resend link/i });
     await user.click(resendButton);
 
     const resendCall = postMock.mock.calls.find(
-      ([endpoint]) => endpoint === "/auth/resend-verification/"
+      ([endpoint]) => endpoint === "/auth/resend-verification/",
     );
     expect(resendCall).toBeTruthy();
     expect(resendCall?.[1]).toEqual({ email: "user@example.com" });
@@ -113,7 +113,7 @@ describe("VerifyEmailPage", () => {
     render(<VerifyEmailPage />);
 
     expect(
-      screen.getByText(/verification token missing/i, { exact: false })
+      screen.getByText(/verification token missing/i, { exact: false }),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -129,7 +129,7 @@ describe("VerifyEmailPage", () => {
     const { rerender } = render(<VerifyEmailPage />);
 
     expect(
-      await screen.findByRole("heading", { name: /email verified/i })
+      await screen.findByRole("heading", { name: /email verified/i }),
     ).toBeInTheDocument();
     expect(postMock).toHaveBeenCalledTimes(1);
 
@@ -138,7 +138,7 @@ describe("VerifyEmailPage", () => {
     rerender(<VerifyEmailPage />);
 
     expect(
-      await screen.findByRole("heading", { name: /email verified/i })
+      await screen.findByRole("heading", { name: /email verified/i }),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -154,7 +154,7 @@ describe("VerifyEmailPage", () => {
     const user = userEvent.setup();
 
     await user.click(
-      await screen.findByRole("button", { name: /continue to dashboard/i })
+      await screen.findByRole("button", { name: /continue to login/i }),
     );
 
     expect(navigateMock).toHaveBeenCalledWith(
@@ -163,7 +163,7 @@ describe("VerifyEmailPage", () => {
         state: expect.any(Function),
         search: expect.any(Function),
         to: "/login",
-      })
+      }),
     );
 
     const navigateArgs = navigateMock.mock.calls[0][0];

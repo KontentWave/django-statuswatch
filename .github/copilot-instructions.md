@@ -3,6 +3,7 @@
 For codebase exploration, planning, refactors, or unfamiliar areas, use Morph MCP `codebase_search` first.
 
 When using Morph MCP / WarpGrep:
+
 - Minimize Morph calls: run one focused `codebase_search` first, then read only relevant files.
 - Do not create todo lists or progress narration unless explicitly requested.
 - Return final answers only: relevant files, line ranges, and one short reason per file.
@@ -210,9 +211,9 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
   DATABASE_URL=postgresql://postgres:devpass@127.0.0.1:5432/dj01
   DB_CONN_MAX_AGE=600
   REDIS_URL=redis://127.0.0.1:6379/0
-  STRIPE_PUBLIC_KEY=pk_test_xxx
-  STRIPE_SECRET_KEY=sk_test_xxx
-  STRIPE_WEBHOOK_SECRET=whsec_xxx
+  STRIPE_PUBLIC_KEY=<pk_test_xxx>
+  STRIPE_SECRET_KEY=<sk_test_xxx>
+  STRIPE_WEBHOOK_SECRET=<whsec_xxx>
   ```
 
 - **Frontend `frontend/.env.example`**
@@ -227,7 +228,6 @@ Optional: `backend/constraints.txt` if you want fully repeatable installs (freez
 
 - **pre-commit** at repo root with hooks for black/ruff/isort/mypy & eslint/prettier.
 - **GitHub Actions**:
-
   - Backend: setup Python, install `-r requirements-dev.txt`, run `pytest -q`.
   - Frontend: Node 20, `pnpm i`/`npm ci`, run `npm run test` & `npm run build`.
 

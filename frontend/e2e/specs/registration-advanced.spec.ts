@@ -24,14 +24,14 @@ test.describe("Advanced registration & verification", () => {
 
     const token = await fetchLatestVerificationToken(
       request,
-      registration.email
+      registration.email,
     );
 
     await page.goto(`/verify-email?token=${token}`);
     await expect(
-      page.getByRole("heading", { name: /email verified/i })
+      page.getByRole("heading", { name: /email verified/i }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /continue to dashboard/i }).click();
+    await page.getByRole("button", { name: /continue to login/i }).click();
     await expect(page).toHaveURL(/\/login/);
 
     await attemptLogin(page, registration.email, registration.password);
@@ -53,7 +53,7 @@ test.describe("Advanced registration & verification", () => {
 
     const firstToken = await fetchLatestVerificationToken(
       request,
-      registration.email
+      registration.email,
     );
 
     await page
@@ -63,7 +63,7 @@ test.describe("Advanced registration & verification", () => {
 
     const secondToken = await fetchLatestVerificationToken(
       request,
-      registration.email
+      registration.email,
     );
     expect(secondToken).not.toBe(firstToken);
 
@@ -72,7 +72,7 @@ test.describe("Advanced registration & verification", () => {
 
     await page.goto(`/verify-email?token=${secondToken}`);
     await expect(
-      page.getByRole("heading", { name: /email verified/i })
+      page.getByRole("heading", { name: /email verified/i }),
     ).toBeVisible();
   });
 
@@ -91,7 +91,7 @@ test.describe("Advanced registration & verification", () => {
 
     const originalToken = await fetchLatestVerificationToken(
       request,
-      registration.email
+      registration.email,
     );
 
     await expireVerificationToken(request, registration.email);
@@ -104,11 +104,11 @@ test.describe("Advanced registration & verification", () => {
 
     const refreshedToken = await fetchLatestVerificationToken(
       request,
-      registration.email
+      registration.email,
     );
 
     await page.goto(`/verify-email?token=${refreshedToken}`);
-    await page.getByRole("button", { name: /continue to dashboard/i }).click();
+    await page.getByRole("button", { name: /continue to login/i }).click();
 
     await attemptLogin(page, registration.email, registration.password);
     await page.waitForURL(/\/dashboard/);
@@ -132,11 +132,11 @@ test.describe("Advanced registration & verification", () => {
 
     const token = await fetchLatestVerificationToken(
       request,
-      registration.email
+      registration.email,
     );
 
     await page.goto(`/verify-email?token=${token}&next=/billing`);
-    await page.getByRole("button", { name: /continue to dashboard/i }).click();
+    await page.getByRole("button", { name: /continue to login/i }).click();
     await expect(page).toHaveURL(/\/login/);
 
     await attemptLogin(page, registration.email, registration.password);
@@ -156,10 +156,10 @@ async function attemptLogin(page: Page, email: string, password: string) {
 
 async function fetchLatestVerificationToken(
   request: APIRequestContext,
-  email: string
+  email: string,
 ): Promise<string> {
   const response = await request.get(
-    `/api/debug/latest-verification-token/?email=${encodeURIComponent(email)}`
+    `/api/debug/latest-verification-token/?email=${encodeURIComponent(email)}`,
   );
   expect(response.ok()).toBeTruthy();
   const data = (await response.json()) as { token: string };
@@ -168,7 +168,7 @@ async function fetchLatestVerificationToken(
 
 async function expireVerificationToken(
   request: APIRequestContext,
-  email: string
+  email: string,
 ) {
   const response = await request.post("/api/debug/expire-verification-token/", {
     data: { email },

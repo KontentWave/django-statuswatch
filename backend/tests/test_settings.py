@@ -5,6 +5,11 @@ Validates that settings are properly split into base/development/production
 and that environment detection works correctly.
 """
 
+import importlib
+import os
+import sys
+from unittest import mock
+
 from django.test import TestCase
 
 
@@ -300,6 +305,9 @@ class CeleryConfigurationTest(TestCase):
 class MiddlewareOrderTest(TestCase):
     """Test middleware order is correct."""
 
+    test_host_tenant_middleware = "app.middleware_test_host_override.TestHostTenantMiddleware"
+    tenant_main_middleware = "django_tenants.middleware.main.TenantMainMiddleware"
+
     def test_internal_endpoint_middleware_first(self):
         """InternalEndpointMiddleware should be first to exempt internal endpoints from HTTPS redirect."""
         from django.conf import settings
@@ -325,13 +333,71 @@ class MiddlewareOrderTest(TestCase):
         from django.conf import settings
 
         whitenoise_idx = settings.MIDDLEWARE.index("whitenoise.middleware.WhiteNoiseMiddleware")
-        tenant_idx = settings.MIDDLEWARE.index(
-            "django_tenants.middleware.main.TenantMainMiddleware"
-        )
+        tenant_idx = settings.MIDDLEWARE.index(self.tenant_main_middleware)
 
         self.assertLess(
             whitenoise_idx, tenant_idx, "WhiteNoise must come before TenantMainMiddleware"
         )
+
+    def test_default_registry_excludes_test_host_override(self):
+        """Shared middleware registry must not include test-only host overrides."""
+        from modules.core.settings_registry import SettingsRegistry
+
+        self.assertNotIn(
+            self.test_host_tenant_middleware,
+            SettingsRegistry().middleware,
+        )
+
+    def test_pytest_settings_enable_test_host_override_before_tenant_middleware(self):
+        """Pytest should enable the override immediately before tenant routing."""
+        from django.conf import settings
+
+        override_idx = settings.MIDDLEWARE.index(self.test_host_tenant_middleware)
+        tenant_idx = settings.MIDDLEWARE.index(self.tenant_main_middleware)
+
+        self.assertEqual(override_idx + 1, tenant_idx)
+
+    def test_development_helper_can_opt_in_test_host_override(self):
+        """Development helper should insert the override only when explicitly enabled."""
+        from app.settings_development import _with_test_host_tenant_middleware
+        from modules.core.settings_registry import SettingsRegistry
+
+        middleware = _with_test_host_tenant_middleware(
+            SettingsRegistry().middleware,
+            enable_override=True,
+        )
+
+        override_idx = middleware.index(self.test_host_tenant_middleware)
+        tenant_idx = middleware.index(self.tenant_main_middleware)
+
+        self.assertEqual(override_idx + 1, tenant_idx)
+
+    def test_development_helper_skips_test_host_override_without_opt_in(self):
+        """Development helper should leave the default chain unchanged when disabled."""
+        from app.settings_development import _with_test_host_tenant_middleware
+        from modules.core.settings_registry import SettingsRegistry
+
+        middleware = _with_test_host_tenant_middleware(
+            SettingsRegistry().middleware,
+            enable_override=False,
+        )
+
+        self.assertNotIn(self.test_host_tenant_middleware, middleware)
+
+    def test_production_settings_do_not_include_test_host_override(self):
+        """Production settings must never include the test-only host override."""
+        env_updates = {
+            "SECRET_KEY": "prod-secret-key-value-with-more-than-fifty-characters-1234567890",
+            "STRIPE_PUBLIC_KEY": "pk_test_placeholder",
+            "STRIPE_SECRET_KEY": "sk_test_placeholder",
+            "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+        }
+
+        with mock.patch.dict(os.environ, env_updates, clear=False):
+            with mock.patch.object(sys, "argv", ["manage.py", "migrate"]):
+                module = importlib.reload(importlib.import_module("app.settings_production"))
+
+        self.assertNotIn(self.test_host_tenant_middleware, module.MIDDLEWARE)
 
     def test_cors_middleware_before_common(self):
         """CORS middleware should come before CommonMiddleware."""

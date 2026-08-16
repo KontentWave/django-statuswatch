@@ -4,6 +4,8 @@ Development settings for StatusWatch project.
 Optimized for local development with relaxed security and verbose logging.
 """
 
+import sys
+
 from modules.core.settings import (
     configure_sentry,
     get_dev_cors_settings,
@@ -13,13 +15,35 @@ from modules.core.settings import (
     get_permissions_policy,
 )
 
+import app.settings_base as settings_base
 from app.settings_base import *  # noqa: F403, F401
 from app.settings_base import env  # noqa: F401
+
+TEST_HOST_TENANT_MIDDLEWARE = "app.middleware_test_host_override.TestHostTenantMiddleware"
+TENANT_MAIN_MIDDLEWARE = "django_tenants.middleware.main.TenantMainMiddleware"
+
+
+def _should_enable_test_host_tenant_middleware() -> bool:
+    return "pytest" in sys.modules or env.bool("ENABLE_TEST_HOST_TENANT_MIDDLEWARE", default=False)
+
+
+def _with_test_host_tenant_middleware(middleware: list[str], *, enable_override: bool) -> list[str]:
+    entries = [item for item in middleware if item != TEST_HOST_TENANT_MIDDLEWARE]
+    if not enable_override:
+        return entries
+
+    tenant_index = entries.index(TENANT_MAIN_MIDDLEWARE)
+    return entries[:tenant_index] + [TEST_HOST_TENANT_MIDDLEWARE] + entries[tenant_index:]
+
 
 # -------------------------------------------------------------------
 # Core Development Settings
 # -------------------------------------------------------------------
 DEBUG = True
+MIDDLEWARE = _with_test_host_tenant_middleware(  # noqa: F405
+    list(settings_base.MIDDLEWARE),
+    enable_override=_should_enable_test_host_tenant_middleware(),
+)
 
 # Disable DRF throttling for local development to keep test runs fast.
 # CI (and pytest) still see throttles unless explicitly disabled via env.

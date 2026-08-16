@@ -36,7 +36,6 @@ class SettingsRegistry:
             "app.middleware_security_custom.CustomSecurityMiddleware",
             "app.middleware.SecurityHeadersMiddleware",
             "whitenoise.middleware.WhiteNoiseMiddleware",
-            "app.middleware_test_host_override.TestHostTenantMiddleware",
             "django_tenants.middleware.main.TenantMainMiddleware",
             "app.middleware_tenant_logging.TenantRoutingLoggingMiddleware",
             "app.middleware_logging.RequestIDMiddleware",

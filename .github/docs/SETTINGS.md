@@ -21,13 +21,11 @@ backend/app/
 ### How It Works
 
 1. **`settings.py`** - Entry point that:
-
    - Detects environment via `DJANGO_ENV` or `DEBUG` env vars
    - Loads appropriate settings module
    - Logs configuration to `logs/settings.log`
 
 2. **`settings_base.py`** - Contains all shared settings:
-
    - Django apps, middleware, templates
    - Database structure, password validators
    - Celery, JWT, REST Framework configuration
@@ -36,7 +34,6 @@ backend/app/
    > **Tip:** `modules/core/settings_registry.py` exposes helper functions (e.g., `get_installed_apps()`, `get_middleware()`) so future modules can register additional apps or middleware without editing `settings_base.py`.
 
 3. **`settings_development.py`** - Development overrides:
-
    - `DEBUG = True`
    - Permissive CORS and ALLOWED_HOSTS
    - Console email backend
@@ -75,11 +72,11 @@ backend/app/
 
 ```bash
 # Development
-SECRET_KEY="django-insecure-dev-key-CHANGE-ME-IN-PRODUCTION"
+SECRET_KEY="<generate-a-local-development-secret-key>"
 DATABASE_URL="postgresql://user:pass@localhost:5432/statuswatch_dev"
 
 # Production
-SECRET_KEY="your-50-char-random-key-generated-securely-here-abc123"
+SECRET_KEY="<generate-a-50-plus-char-random-secret-key>"
 DATABASE_URL="postgresql://user:pass@db.example.com:5432/statuswatch"
 ```
 
@@ -132,14 +129,14 @@ REDIS_URL="redis://redis.example.com:6379/1"
 
 ```bash
 # Test mode (development)
-STRIPE_PUBLIC_KEY="pk_test_51ABC..."
-STRIPE_SECRET_KEY="sk_test_51ABC..."
-STRIPE_WEBHOOK_SECRET="whsec_..."
+STRIPE_PUBLIC_KEY="<pk_test_...>"
+STRIPE_SECRET_KEY="<sk_test_...>"
+STRIPE_WEBHOOK_SECRET="<whsec_...>"
 
 # Live mode (production)
-STRIPE_PUBLIC_KEY="pk_live_51ABC..."
-STRIPE_SECRET_KEY="sk_live_51ABC..."
-STRIPE_WEBHOOK_SECRET="whsec_..."
+STRIPE_PUBLIC_KEY="<pk_live_...>"
+STRIPE_SECRET_KEY="<sk_live_...>"
+STRIPE_WEBHOOK_SECRET="<whsec_...>"
 ```
 
 ---
@@ -353,9 +350,9 @@ DATABASE_URL=postgresql://postgres:devpass@localhost:5432/statuswatch_dev
 REDIS_URL=redis://127.0.0.1:6379/0
 
 # Stripe (test mode - optional in dev)
-STRIPE_PUBLIC_KEY=pk_test_51...
-STRIPE_SECRET_KEY=sk_test_51...
-STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PUBLIC_KEY=<pk_test_...>
+STRIPE_SECRET_KEY=<sk_test_...>
+STRIPE_WEBHOOK_SECRET=<whsec_...>
 
 # Frontend
 FRONTEND_URL=http://localhost:5173
@@ -373,17 +370,17 @@ DJANGO_ENV=production
 DEBUG=False
 
 # Core (REQUIRED)
-SECRET_KEY=your-50-char-random-key-here
+SECRET_KEY=<generate-a-50-plus-char-random-secret-key>
 DATABASE_URL=postgresql://user:pass@db.prod.com:5432/statuswatch
 
 # Redis
 REDIS_URL=redis://redis.prod.com:6379/0
 
 # Stripe (REQUIRED for payments)
-STRIPE_PUBLIC_KEY=pk_live_51...
-STRIPE_SECRET_KEY=sk_live_51...
-STRIPE_PRO_PRICE_ID=price_...
-STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PUBLIC_KEY=<pk_live_...>
+STRIPE_SECRET_KEY=<sk_live_...>
+STRIPE_PRO_PRICE_ID=<price_...>
+STRIPE_WEBHOOK_SECRET=<whsec_...>
 
 # Security
 ENFORCE_HTTPS=True

@@ -705,10 +705,10 @@ USE_X_FORWARDED_HOST=True
 SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
 
 # Stripe (Production Keys)
-STRIPE_PUBLIC_KEY=pk_live_xxxxxxxxxxxxxxxxxxxxx
-STRIPE_SECRET_KEY=sk_live_xxxxxxxxxxxxxxxxxxxxx
-STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-STRIPE_PRO_PRICE_ID=price_xxxxxxxxxxxxxxxxxxxxxxxx
+STRIPE_PUBLIC_KEY=<pk_live_xxxxxxxxxxxxxxxxxxxxx>
+STRIPE_SECRET_KEY=<sk_live_xxxxxxxxxxxxxxxxxxxxx>
+STRIPE_WEBHOOK_SECRET=<whsec_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx>
+STRIPE_PRO_PRICE_ID=<price_xxxxxxxxxxxxxxxxxxxxxxxx>
 
 # Email (SendGrid)
 EMAIL_HOST=smtp.sendgrid.net

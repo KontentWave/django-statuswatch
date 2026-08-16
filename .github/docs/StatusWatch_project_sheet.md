@@ -12,26 +12,27 @@ Here is a detailed breakdown of the features for your MVP. Each feature includes
 
 ### 1. User Registration & Tenant Creation
 
-- **Action:** Allow a new user to sign up, which automatically provisions a new, isolated organization (tenant) for them.
+- **Action:** Allow a new user to sign up, provision a new isolated organization (tenant), and require email verification before the first login.
 - **Test Plan:**
-  - Backend: Test that a POST request to the register endpoint creates a `User`, a `Tenant`, and a new database schema.
-  - Frontend: Test that a valid form submission redirects to the login page and an invalid one shows error messages.
+  - Backend: Test that a POST request to the register endpoint creates a `User`, a `Tenant`, a derived schema/domain, and an unverified profile with a verification email.
+  - Frontend: Test that a valid form submission stays on the success state with "Check your inbox," and that invalid input shows validation errors.
 
 #### **Frontend Tasks (React)**
 
 - Create a public route and view for `/register`.
 - Build the registration form using **React Hook Form** for state and **Zod** for validation (e.g., organization name, email, password, password confirmation).
 - On form submission, use **Axios** to send a `POST` request to the back-end API endpoint.
-- Handle API responses: on success, redirect the user to the `/login` page with a success message; on failure, display validation errors from the API.
+- Handle API responses: on success, keep the user on a durable "Check your inbox" confirmation state; on failure, display validation errors from the API.
 
 #### **Backend Tasks (Django)**
 
 - Create a DRF `APIView` for the `/api/auth/register/` endpoint.
 - This view's `post` method will:
   1.  Validate the incoming data (organization name, email, password).
-  2.  Create the `Tenant` (Organization) object. `django-tenants` will automatically create the corresponding schema.
-  3.  Within the new tenant's context, create the new `User` and assign them the "Owner" role.
-  4.  Return a `201 Created` status on success.
+  2.  Derive the tenant schema/domain from the organization name and reject reserved slugs.
+  3.  Create the `Tenant` (Organization) object. `django-tenants` will automatically create the corresponding schema.
+  4.  Within the new tenant's context, create the new `User`, the unverified `UserProfile`, assign the "Owner" role, and send a verification email.
+  5.  Return a `201 Created` status on success.
 
 ---
 
@@ -39,11 +40,11 @@ Here is a detailed breakdown of the features for your MVP. Each feature includes
 
 - **Frontend**
   - `/register` route defined via TanStack Router; `RegisterPage` uses React Hook Form + Zod for validation and Axios for submission.
-  - Successful submissions navigate to `/login` with a replacement state message so the banner survives refresh; backend validation errors hydrate field-level messages.
+  - Successful submissions remain on-page in a persisted "Check your inbox" state; backend validation errors hydrate field-level messages.
   - Vitest suite (`src/pages/__tests__/RegisterPage.test.tsx`) covers happy path, client-side mismatch, and API error propagation.
 - **Backend**
   - `RegistrationView` (DRF `APIView`) persists tenant data through `RegistrationSerializer`, which slugifies schema names, provisions `Domain` entries, and creates an owner `User` within the tenant schema.
-  - `backend/tests/test_registration.py` ensures tenant, domain, and owner group membership are created; parametric cases cover mismatch and invalid payloads.
+  - `backend/tests/test_registration.py` ensures tenant, derived schema/domain, reserved-name rejection, and owner group membership are created; `backend/tests/test_email_verification.py` and `backend/tests/test_login.py` cover verification expiry, token rotation, and unverified-login rejection.
   - Migrations `0002_add_localhost_domain` and `0003_add_dev_domains` seed development hostnames (`localhost`, `statuswatch.local`, `acme.statuswatch.local`) on the public tenant for nginx/OpenResty routing.
 - **Tooling & Verification**
   - Helper script `backend/scripts/list_tenants.py` lists tenants, domains, and owner accounts for manual verification.
@@ -345,7 +346,6 @@ Here is a detailed breakdown of the features for Phase 2, focusing on commercial
 #### **Implementation Notes**
 
 - **Frontend**
-
   - `frontend/src/app/router.tsx` registers `/billing`, `/billing/success`, and `/billing/cancel` beneath the authenticated route branch so only signed-in users can initiate the upgrade flow.
   - `BillingPage` (`frontend/src/pages/Billing.tsx`) calls `createBillingCheckoutSession` via TanStack Query, persists the chosen plan with `billing-storage`, and logs structured events through `billing-logger` before redirecting the browser to Stripe.
   - `BillingSuccessPage` and `BillingCancelPage` (`frontend/src/pages/BillingSuccess.tsx`, `frontend/src/pages/BillingCancel.tsx`) read the stored plan, surface the `session_id` when present, emit `completed`/`canceled` billing events, and provide navigation back to `/dashboard` or `/billing`.
@@ -353,7 +353,6 @@ Here is a detailed breakdown of the features for Phase 2, focusing on commercial
   - Vitest coverage (`frontend/src/pages/__tests__/BillingPage.test.tsx`, `frontend/src/pages/__tests__/BillingSuccessPage.test.tsx`, `frontend/src/pages/__tests__/BillingCancelPage.test.tsx`) asserts redirects, logging hooks, and storage hygiene under success and error conditions.
 
 - **Backend**
-
   - `BillingCheckoutSessionView` (`backend/payments/views.py`) validates Stripe configuration, maps plans to price IDs, and creates subscription-mode Checkout sessions that carry tenant metadata and the user email.
   - The view writes to the `payments.billing` and `payments.checkout` loggers, which feed `backend/logs/billing.log` and `backend/logs/payments.log` for audit visibility.
   - `payments/billing_urls.py` exposes `create-checkout-session/`, and both `app/urls_tenant.py` and `app/urls_public.py` include it at `/api/billing/` to keep routing consistent across schemas.
@@ -664,7 +663,6 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
 #### **Frontend Tasks (React)**
 
 - **Login Page Enhancements:**
-
   - Update the login form to handle a new `multiple_tenants` response from the authentication API.
   - Add state management for: `showTenantSelector` (boolean), `availableTenants` (array), `selectedTenant` (string), and `loginCredentials` (object).
   - Implement tenant selector UI with a dropdown menu showing organization names and an inline "Continue to [Tenant]" button.
@@ -680,7 +678,6 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
 #### **Backend Tasks (Django)**
 
 - **Smart Login Implementation:**
-
   - Create `SmartLoginView` extending Simple JWT's `TokenObtainPairView` to detect multi-tenant users.
   - In the `post` method:
     1. Validate credentials (email + password).
@@ -692,14 +689,12 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
   - Add comprehensive logging for multi-tenant authentication events.
 
 - **Token Blacklist Migration:**
-
   - Create migration to move `token_blacklist_*` tables from tenant schemas to PUBLIC schema.
   - Update `TokenBlacklistApplication` to use `PUBLIC_SCHEMA_NAME` for database routing.
   - Implement custom database router to force token blacklist operations to the public schema.
   - Add `TokenRefreshViewCustom` that sets public schema context before validating refresh tokens.
 
 - **Organization Name Uniqueness:**
-
   - Add `unique=True` constraint to `Client.name` field in the tenants model.
   - Create migration `0006_alter_client_name.py` with `AlterField` operation.
   - Create `DuplicateOrganizationNameError` exception class:
@@ -719,7 +714,6 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
 #### **Implementation Notes**
 
 - **Frontend**
-
   - `frontend/src/pages/Login.tsx` (lines 28-370):
     - Added `TenantOption` type for tenant metadata (schema, name, id).
     - Updated `LoginApiResponse` with `multiple_tenants`, `tenants[]`, `message` fields.
@@ -737,7 +731,6 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
   - Vitest coverage: All existing tests passing (58/58), no regressions.
 
 - **Backend**
-
   - `backend/api/views.py` - `SmartLoginView`:
     - Lines 150-320: Multi-tenant detection logic with cross-schema user queries.
     - Handles both single-tenant (normal flow) and multi-tenant (selector flow) cases.
@@ -766,7 +759,6 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
     - Integration: Token blacklist in PUBLIC schema verified.
 
 - **Database & Infrastructure**
-
   - Token blacklist tables migrated to `public` schema:
     - `token_blacklist_outstandingtoken`
     - `token_blacklist_blacklistedtoken`
@@ -777,7 +769,6 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
   - Manual cleanup script created for removing test tenants: `manual_cleanup_duplicates.py`.
 
 - **API Documentation**
-
   - Created `.github/docs/API_ERRORS.md` with comprehensive error response documentation.
   - Documents all 409 Conflict errors: duplicate email, duplicate organization name.
   - Includes multi-tenant login response format (200 OK with `multiple_tenants` field).
@@ -785,7 +776,6 @@ StatusWatch Phase 2 billing infrastructure is production-ready with comprehensiv
   - Best practices for client-side error management and logging.
 
 - **Security & Quality**
-
   - Zero critical vulnerabilities introduced.
   - All tests passing: 158/158 backend, 58/58 frontend (216 total).
   - Type safety: 100% mypy coverage maintained.
@@ -1184,10 +1174,10 @@ USE_X_FORWARDED_HOST=True
 SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
 
 # Stripe
-STRIPE_PUBLIC_KEY=pk_live_xxx
-STRIPE_SECRET_KEY=sk_live_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRO_PRICE_ID=price_xxx
+STRIPE_PUBLIC_KEY=<pk_live_xxx>
+STRIPE_SECRET_KEY=<sk_live_xxx>
+STRIPE_WEBHOOK_SECRET=<whsec_xxx>
+STRIPE_PRO_PRICE_ID=<price_xxx>
 
 # Email
 EMAIL_HOST=smtp.sendgrid.net
@@ -1614,7 +1604,6 @@ pytest backend/tests/test_monitoring_scheduler_service.py -q  # new deterministi
 
 - Re-run `celery -A app beat -l info` inside the mod stack to verify tasks still register under `monitors.schedule_endpoint_checks` before changing to `modules.monitoring.tasks.schedule_endpoint_checks`.
 - Added regression tests:
-
   - `backend/tests/test_monitors_tasks_module.py` ensures `monitors.tasks` keeps exposing `requests` and `_is_endpoint_due` for legacy callers.
   - `backend/tests/test_celery_tasks.py` asserts `monitors.tasks.schedule_endpoint_checks` stays registered with the Celery app, protecting the beat schedule during refactors.
   - Recommended smoke suite (documented in `README.md`):
@@ -1684,7 +1673,7 @@ Run these steps in the modular stack whenever monitoring code moves or before de
 6. [ ] **Blue/green rehearsal** – stage the modular images on `staging.statuswatch.kontentwave.digital` (same EC2 sizing) using the production compose stack plus the mod override. Checklist:
 
 - Infra prep: `git pull && dcp pull` on staging, then run `docker compose -f compose.yaml -f docker-compose.production.yml -f docker-compose.mod.yml up -d` so the mod API/worker/beat containers sit behind Caddy while the legacy stack keeps serving traffic.
-- Config sanity: run `docker compose -f compose.yaml -f docker-compose.mod.yml config >/dev/null` locally before shipping overrides; root `.env` secret was rotated on Nov 17, 2025 (`SECRET_KEY=w0AKtbA5Lo1en6QfTzkehQueadRjLUNPl1lEzk2TdHyZx_QMJJLs3Lzjq3Jn_LbJ3C8jyNsOBObeWBCxuPSupA`) specifically to eliminate `${m}` warnings, so renders should now be silent.
+- Config sanity: run `docker compose -f compose.yaml -f docker-compose.mod.yml config >/dev/null` locally before shipping overrides; keep `SECRET_KEY=<stored in deployment environment; never commit the value>` in deployment-managed secrets so compose renders stay clean without documenting live key material.
 - Data sync: snapshot prod with `pg_dump statuswatch > backup.sql`, restore into `statuswatch_mod` (staging) so tenant data and Stripe customer IDs match real-world cases; reload Redis keys via `redis-cli --rdb /tmp/mod.rdb` if auth states need parity.
 - Smoke + parity tests (run against `https://acme.staging.statuswatch.kontentwave.digital`):
 
@@ -1759,7 +1748,7 @@ Here is a detailed breakdown of the features for Phase 4, focusing on expanding 
 - **Test Data Management:**
   - Create a lightweight management command (e.g., `python manage.py reset_e2e_data`) that flushes the database back to an empty state so the registration flow always starts from a blank slate. Future iterations can grow this to seed tenants/users for broader scenarios.
 - **Email Testing:**
-  - Development already uses the console email backend; no verification UI exists yet, so the POC simply asserts the redirect/flash message. When email verification ships, revisit the DEBUG-only helper endpoint recommendation to expose the latest verification link for Playwright.
+  - Development uses the console email backend, while the implemented SPA verification flow and DEBUG-only helper endpoints support Playwright coverage for token fetch, expiry, resend, and post-verification login.
 
 #### **CI/CD Tasks (GitHub Actions)**
 
@@ -1782,38 +1771,38 @@ Here is a detailed breakdown of the features for Phase 4, focusing on expanding 
 
 ### 11. Advanced User Registration & Email Verification
 
-- **Action:** Upgrade the registration flow to enforce mandatory email verification, prevent unverified logins, and handle edge cases like expired tokens or reserved subdomains.
+- **Action:** Registration now enforces mandatory email verification, prevents unverified logins, and handles reserved names, expired tokens, resend token rotation, and safe post-login redirects.
 - **Test Plan:**
-  - **E2E (Playwright):** Implement `frontend/e2e/specs/registration-advanced.spec.ts` following the `@happy` path (Register → Mock Email → Click Link → Auto-Login) and `@negative` cases (Login blocked unverified).
-  - **Backend:** Unit test `verify_email` logic (expired tokens, double verification) and ensure `TokenObtainPairView` raises `403` for unverified users.
+  - **E2E (Playwright):** Cover registration, blocked-unverified login, verification, resend invalidation, expiry recovery, and preserving a safe `/billing` redirect across verification and login.
+  - **Backend:** Unit test `verify_email` logic (expired tokens, single-use behavior, resend rotation) and ensure `TokenObtainPairView` returns `403` with `error.code = "email_unverified"` for unverified users.
 
 #### **Frontend Tasks (React)**
 
 - **New Route:** Create `/verify-email` route and `VerifyEmailPage.tsx`.
   - Accepting a `?token=...` query parameter.
   - Calls `POST /api/auth/verify-email/` on mount.
-  - Displays loading, success (with "Continue to Dashboard" button), or error states (with "Resend Link" button).
+  - Displays loading, success (with "Continue to Login"), or error states (with "Resend Link").
 - **Registration Update:**
-  - Modify `RegisterPage` to transition to a "Check your inbox" success state instead of redirecting immediately to login.
-  - Ensure the success state persists even if the user refreshes (using `react-router` state or a URL query param).
+  - `RegisterPage` transitions to a durable "Check your inbox" success state instead of redirecting immediately to login.
+  - The success state persists across refreshes through session storage.
 - **Login Guard:**
-  - Update `LoginPage` to handle specific `403/401` errors regarding verification.
-  - Display a specific alert: "Email not verified. [Resend Verification Email]" if the backend rejects the login due to verification status.
+  - `LoginPage` handles verification-specific `403` responses.
+  - It displays an "Email not verified" alert with a resend action when the backend rejects the login due to verification status.
 
 #### **Backend Tasks (Django)**
 
 - **Login Enforcement:**
-  - Modify `TokenObtainPairWithLoggingView` (or the `SmartLoginView`) to check `user.profile.email_verified` before issuing tokens.
-  - Raise a specific `AuthenticationFailed` or `PermissionDenied` exception if false.
+  - `TokenObtainPairWithLoggingView` checks `user.profile.email_verified` before issuing tokens.
+  - Unverified users receive `403` with `error.code = "email_unverified"`.
 - **Email Dispatch:**
-  - Ensure `RegistrationView` (or `TenantProvisioner`) triggers the `send_verification_email` task (via Celery) immediately after user creation.
+  - `TenantProvisioner` creates the unverified profile and sends the verification email immediately after user creation.
 - **Validation Hardening:**
-  - Enhance `RegistrationSerializer` to validate against a `RESERVED_SUBDOMAINS` list (e.g., `www`, `api`, `admin`, `public`) to satisfy the `@validation` scenarios.
-  - Ensure `PasswordValidator` enforces the complexity rules defined in the Gherkin (if not already strictly active).
+  - `RegistrationSerializer` validates organization names against the shared reserved-subdomain list.
+  - Password validation is enforced through Django validators and the custom complexity validators.
 
 #### **Implementation Notes**
 
-- **Architecture:** The backend endpoints (`verify_email`, `resend_verification_email`) already exist in `api/views.py` but need to be strictly wired into the auth flow. The `UserProfile` model already supports tokens; ensure `is_verification_token_expired()` logic is respected.
+- **Architecture:** The backend endpoints (`verify_email`, `resend_verification_email`) are wired into the auth flow, and the `UserProfile` model provides the token expiry and regeneration behavior used by the verification journey.
 - **Testing:**
   - For E2E testing, use the `DEBUG` mode email backend or a helper endpoint to retrieve the verification link programmatically, avoiding the need for a real mail server in CI.
   - Use `backend/modules/tenancy/provisioning.py` to centralize the "Reserved Subdomain" logic so it protects both API and potentially future admin forms.

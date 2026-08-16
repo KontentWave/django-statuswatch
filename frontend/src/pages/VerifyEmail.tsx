@@ -50,7 +50,7 @@ type CachedVerification = {
 };
 
 const readCachedVerification = (
-  token: string | null
+  token: string | null,
 ): CachedVerification | null => {
   if (!token || typeof window === "undefined") {
     return null;
@@ -74,7 +74,7 @@ const readCachedVerification = (
 
 const writeCachedVerification = (
   token: string,
-  payload: CachedVerification
+  payload: CachedVerification,
 ): void => {
   if (typeof window === "undefined") {
     return;
@@ -93,7 +93,7 @@ export default function VerifyEmailPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [message, setMessage] = useState<string>(
-    "Verifying your email. Please wait..."
+    "Verifying your email. Please wait...",
   );
   const [resendEmail, setResendEmail] = useState<string | null>(null);
   const [resendFeedback, setResendFeedback] = useState<string | null>(null);
@@ -114,7 +114,7 @@ export default function VerifyEmailPage() {
       processedTokenRef.current = null;
       setStatus("error");
       setMessage(
-        "Verification token missing. Please open the link from your latest email."
+        "Verification token missing. Please open the link from your latest email.",
       );
       setResendEmail(null);
       return;
@@ -170,7 +170,7 @@ export default function VerifyEmailPage() {
       .catch((error: AxiosError<VerifyErrorResponse>) => {
         if (cancelled) return;
         const structuredError = extractErrorMessage(
-          error.response?.data?.error
+          error.response?.data?.error,
         );
         const detail =
           structuredError ??
@@ -218,7 +218,7 @@ export default function VerifyEmailPage() {
     try {
       const { data } = await api.post<ResendResponse>(
         "/auth/resend-verification/",
-        { email: resendEmail }
+        { email: resendEmail },
       );
       const detail =
         data?.detail ??
@@ -227,7 +227,7 @@ export default function VerifyEmailPage() {
     } catch (error) {
       const axiosError = error as AxiosError<ResendResponse>;
       const structuredError = extractErrorMessage(
-        axiosError.response?.data?.error
+        axiosError.response?.data?.error,
       );
       const detail =
         axiosError.response?.data?.detail ??
@@ -277,7 +277,7 @@ export default function VerifyEmailPage() {
               onClick={handleContinue}
               className="w-full rounded bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
             >
-              Continue to Dashboard
+              Continue to Login
             </button>
           </div>
         )}
