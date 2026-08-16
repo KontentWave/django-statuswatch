@@ -17,6 +17,13 @@ const RESEND_GENERIC_MESSAGE =
 const RESEND_ERROR_FALLBACK =
   "We couldn't resend the verification email. Please try again.";
 
+type LoginErrorPayload =
+  | string
+  | {
+      message?: string;
+      code?: string;
+    };
+
 const extractMessage = (value: unknown): string | null => {
   if (typeof value === "string") {
     return value;
@@ -36,6 +43,19 @@ const extractMessage = (value: unknown): string | null => {
 
 const resolveMessage = (value: unknown, fallback: string): string => {
   return extractMessage(value) ?? fallback;
+};
+
+const extractErrorCode = (value: unknown): string | null => {
+  if (
+    value &&
+    typeof value === "object" &&
+    "code" in value &&
+    typeof (value as { code?: unknown }).code === "string"
+  ) {
+    return (value as { code: string }).code;
+  }
+
+  return null;
 };
 
 const loginSchema = z.object({
@@ -74,7 +94,7 @@ type LoginApiResponse = {
   tenants?: TenantOption[];
   message?: string;
   // Error field
-  error?: string;
+  error?: LoginErrorPayload;
 };
 
 export default function LoginPage() {
@@ -151,7 +171,7 @@ export default function LoginPage() {
         : "";
       const redirectParams = new URLSearchParams(normalizedSearch);
       const redirectCandidate = sanitizeRedirectPath(
-        redirectParams.get("redirect") ?? redirectParams.get("next")
+        redirectParams.get("redirect") ?? redirectParams.get("next"),
       );
       const destination = redirectCandidate ?? DEFAULT_REDIRECT;
 
@@ -164,7 +184,7 @@ export default function LoginPage() {
       });
       window.history.replaceState(null, "", window.location.pathname);
       setFormError(
-        "We couldn't finalize your sign-in automatically. Please sign in again."
+        "We couldn't finalize your sign-in automatically. Please sign in again.",
       );
     } finally {
       setIsApplyingTransfer(false);
@@ -307,30 +327,9 @@ export default function LoginPage() {
       const error = err as AxiosError<LoginApiResponse>;
 
       // Extract error message - handle both string and object formats
-      let errorMessage: string | null = null;
       const errorData = error.response?.data?.error;
-
-      let errorCode: string | null = null;
-
-      if (typeof errorData === "string") {
-        errorMessage = errorData;
-      } else if (
-        errorData &&
-        typeof errorData === "object" &&
-        "message" in errorData
-      ) {
-        errorMessage = (errorData as { message: string }).message;
-        if ("code" in errorData && typeof errorData.code === "string") {
-          errorCode = errorData.code;
-        }
-      } else if (
-        errorData &&
-        typeof errorData === "object" &&
-        "code" in errorData &&
-        typeof errorData.code === "string"
-      ) {
-        errorCode = errorData.code;
-      }
+      let errorMessage = extractMessage(errorData);
+      const errorCode = extractErrorCode(errorData);
 
       // Fallback to detail or generic message
       if (!errorMessage) {
@@ -367,7 +366,7 @@ export default function LoginPage() {
     try {
       const { data } = await api.post<{ detail?: unknown; error?: unknown }>(
         "/auth/resend-verification/",
-        { email: pendingVerificationEmail }
+        { email: pendingVerificationEmail },
       );
 
       const detail = resolveMessage(data?.detail, RESEND_GENERIC_MESSAGE);
@@ -379,7 +378,7 @@ export default function LoginPage() {
       }>;
       const detail = resolveMessage(
         axiosError.response?.data?.detail ?? axiosError.response?.data?.error,
-        RESEND_ERROR_FALLBACK
+        RESEND_ERROR_FALLBACK,
       );
       setResendStatus(detail);
     } finally {
@@ -527,7 +526,7 @@ export default function LoginPage() {
                 email: loginCredentials.email,
                 selected_tenant: selectedTenant,
                 selected_tenant_name: availableTenants.find(
-                  (t) => t.tenant_schema === selectedTenant
+                  (t) => t.tenant_schema === selectedTenant,
                 )?.tenant_name,
               });
 
@@ -539,7 +538,7 @@ export default function LoginPage() {
                     username: loginCredentials.email,
                     password: loginCredentials.password,
                     tenant_schema: selectedTenant,
-                  }
+                  },
                 );
 
                 const accessToken = data?.access;
@@ -587,33 +586,9 @@ export default function LoginPage() {
                 const error = err as AxiosError<LoginApiResponse>;
 
                 // Extract error message - handle both string and object formats
-                let errorMessage: string | null = null;
                 const errorData = error.response?.data?.error;
-
-                let errorCode: string | null = null;
-
-                if (typeof errorData === "string") {
-                  errorMessage = errorData;
-                } else if (
-                  errorData &&
-                  typeof errorData === "object" &&
-                  "message" in errorData
-                ) {
-                  errorMessage = (errorData as { message: string }).message;
-                  if (
-                    "code" in errorData &&
-                    typeof (errorData as { code?: unknown }).code === "string"
-                  ) {
-                    errorCode = (errorData as { code?: string }).code ?? null;
-                  }
-                } else if (
-                  errorData &&
-                  typeof errorData === "object" &&
-                  "code" in errorData &&
-                  typeof errorData.code === "string"
-                ) {
-                  errorCode = errorData.code;
-                }
+                let errorMessage = extractMessage(errorData);
+                const errorCode = extractErrorCode(errorData);
 
                 // Fallback to detail or generic message
                 if (!errorMessage) {
@@ -643,7 +618,7 @@ export default function LoginPage() {
             {selectedTenant
               ? `Continue to ${
                   availableTenants.find(
-                    (t) => t.tenant_schema === selectedTenant
+                    (t) => t.tenant_schema === selectedTenant,
                   )?.tenant_name
                 }`
               : "Select an organization to continue"}
