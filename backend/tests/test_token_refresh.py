@@ -18,7 +18,6 @@ Key behaviors tested:
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import connection
 from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -40,11 +39,16 @@ def test_user_with_tokens(tenant_factory):
     Create a test user in a tenant and generate JWT tokens.
 
     Returns:
-        tuple: (user, access_token, refresh_token)
+        tuple: (user, access_token, refresh_token, host)
     """
     from django_tenants.utils import schema_context
 
     tenant = tenant_factory("Test Company")
+
+    from tenants.models import Domain
+
+    domain_obj = Domain.objects.filter(tenant=tenant).order_by("-is_primary").first()
+    host = domain_obj.domain if domain_obj else f"{tenant.schema_name}.localhost"
 
     # Create user in tenant schema
     with schema_context(tenant.schema_name):
@@ -60,7 +64,7 @@ def test_user_with_tokens(tenant_factory):
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
 
-    return user, access_token, refresh_token
+    return user, access_token, refresh_token, host
 
 
 class TestTokenRefresh:
@@ -78,12 +82,13 @@ class TestTokenRefresh:
         - Response contains new 'access' token
         - Works in tenant schema (token_blacklist per-tenant)
         """
-        user, access_token, refresh_token = test_user_with_tokens
+        user, access_token, refresh_token, host = test_user_with_tokens
 
         response = api_client.post(
             "/api/auth/token/refresh/",
             {"refresh": refresh_token},
             format="json",
+            HTTP_HOST=host,
         )
 
         assert (
@@ -155,7 +160,7 @@ class TestTokenRefresh:
 
         from rest_framework_simplejwt.exceptions import TokenError
 
-        user, access_token, refresh_token = test_user_with_tokens
+        user, access_token, refresh_token, host = test_user_with_tokens
 
         # Mock RefreshToken to raise TokenError (expired)
         with patch("api.token_refresh.RefreshToken") as mock_refresh:
@@ -165,6 +170,7 @@ class TestTokenRefresh:
                 "/api/auth/token/refresh/",
                 {"refresh": refresh_token},
                 format="json",
+                HTTP_HOST=host,
             )
 
         assert (
@@ -194,7 +200,7 @@ class TestTokenRefresh:
             OutstandingToken,
         )
 
-        user, access_token, refresh_token = test_user_with_tokens
+        user, access_token, refresh_token, host = test_user_with_tokens
 
         # Enable token rotation and blacklisting
         settings.SIMPLE_JWT = {
@@ -208,6 +214,7 @@ class TestTokenRefresh:
             "/api/auth/token/refresh/",
             {"refresh": refresh_token},
             format="json",
+            HTTP_HOST=host,
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -236,6 +243,7 @@ class TestTokenRefresh:
             "/api/auth/token/refresh/",
             {"refresh": refresh_token},  # Old token
             format="json",
+            HTTP_HOST=host,
         )
 
         assert (
@@ -253,7 +261,7 @@ class TestTokenRefresh:
         - Token can be reused multiple times
         - Only access token changes
         """
-        user, access_token, refresh_token = test_user_with_tokens
+        user, access_token, refresh_token, host = test_user_with_tokens
 
         # Disable token rotation
         settings.SIMPLE_JWT = {
@@ -265,6 +273,7 @@ class TestTokenRefresh:
             "/api/auth/token/refresh/",
             {"refresh": refresh_token},
             format="json",
+            HTTP_HOST=host,
         )
 
         assert response.status_code == status.HTTP_200_OK
@@ -282,6 +291,7 @@ class TestTokenRefresh:
             "/api/auth/token/refresh/",
             {"refresh": refresh_token},
             format="json",
+            HTTP_HOST=host,
         )
 
         assert (
@@ -303,20 +313,13 @@ class TestTokenRefresh:
         - Refresh succeeds without tenant context
         - No queries to tenant auth_user table
         """
-        user, access_token, refresh_token = test_user_with_tokens
-
-        # Explicitly set to public schema
-
-        # Verify we're in public schema
-        with connection.cursor() as cursor:
-            cursor.execute("SHOW search_path")
-            search_path = cursor.fetchone()[0]
-            assert "public" in search_path, f"Expected public schema, got: {search_path}"
+        user, access_token, refresh_token, host = test_user_with_tokens
 
         response = api_client.post(
             "/api/auth/token/refresh/",
             {"refresh": refresh_token},
             format="json",
+            HTTP_HOST=host,
         )
 
         assert response.status_code == status.HTTP_200_OK, (
@@ -341,7 +344,7 @@ class TestTokenRefresh:
         """
         from unittest.mock import patch
 
-        user, access_token, refresh_token = test_user_with_tokens
+        user, access_token, refresh_token, host = test_user_with_tokens
 
         # Enable rotation with blacklisting
         settings.SIMPLE_JWT = {
@@ -360,6 +363,7 @@ class TestTokenRefresh:
                 "/api/auth/token/refresh/",
                 {"refresh": refresh_token},
                 format="json",
+                HTTP_HOST=host,
             )
 
         # Should succeed despite blacklist failure

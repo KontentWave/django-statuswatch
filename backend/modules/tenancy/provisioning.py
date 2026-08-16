@@ -23,6 +23,19 @@ from tenants.models import Client, Domain
 logger = logging.getLogger("modules.tenancy.provisioner")
 
 
+# Reserved schema slugs are blocked to avoid conflicts with shared infrastructure
+RESERVED_SUBDOMAIN_SLUGS: set[str] = {
+    "www",
+    "api",
+    "admin",
+    "public",
+    "status",
+    "statuswatch",
+    "tenant",
+    "tenants",
+}
+
+
 @dataclass(slots=True)
 class TenantDomainService:
     """Create and manage per-tenant domains in a reusable way."""
@@ -145,6 +158,11 @@ class TenantProvisioner:
         base = slugify(organization_name)
         if not base:
             raise DuplicateOrganizationNameError("Invalid organization name.")
+
+        if base in RESERVED_SUBDOMAIN_SLUGS:
+            raise DuplicateOrganizationNameError(
+                "This organization name is reserved. Please choose another name."
+            )
 
         candidate = base
         suffix = 1

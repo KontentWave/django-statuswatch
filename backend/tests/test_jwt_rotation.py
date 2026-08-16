@@ -12,9 +12,11 @@ Tests cover:
 from datetime import timedelta
 
 import pytest
+from api.models import UserProfile
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from django_tenants.utils import schema_context
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -39,10 +41,16 @@ def test_user(db):
             password="TokenTest@123456",
             email="token@example.com",
         )
+        UserProfile.objects.update_or_create(
+            user=user,
+            defaults={
+                "email_verified": True,
+                "email_verification_sent_at": timezone.now(),
+            },
+        )
     return user
 
 
-@pytest.mark.django_db
 class TestJWTTokenLifetime:
     """Test JWT token lifetime configuration."""
 
@@ -63,7 +71,6 @@ class TestJWTTokenLifetime:
         assert settings.SIMPLE_JWT["BLACKLIST_AFTER_ROTATION"] is True
 
 
-@pytest.mark.django_db
 class TestTokenObtain:
     """Test obtaining JWT tokens via login."""
 
@@ -100,7 +107,6 @@ class TestTokenObtain:
         assert "refresh" not in response.data
 
 
-@pytest.mark.django_db
 class TestTokenRefresh:
     """Test JWT token refresh with rotation."""
 
@@ -178,7 +184,6 @@ class TestTokenRefresh:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
-@pytest.mark.django_db
 class TestTokenBlacklist:
     """Test JWT token blacklisting on logout."""
 
@@ -274,7 +279,6 @@ class TestTokenBlacklist:
         assert "invalid" in str(response.data).lower()
 
 
-@pytest.mark.django_db
 class TestTokenBlacklistModels:
     """Test that token blacklist models work correctly."""
 

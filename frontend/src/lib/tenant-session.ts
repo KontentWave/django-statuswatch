@@ -1,4 +1,5 @@
 import { logAuthEvent } from "@/lib/auth-logger";
+import type { AllowedRedirectPath } from "@/lib/redirects";
 
 type TransferSource = "login_page" | "tenant_selector" | "homepage_demo";
 
@@ -10,6 +11,7 @@ interface TenantSessionTransferParams {
   tenantSchema?: string | null;
   username?: string | null;
   source: TransferSource;
+  redirectPath?: AllowedRedirectPath | null;
 }
 
 function extractHostAndPort(domain: string): { host: string; port: string } {
@@ -51,6 +53,7 @@ export function initiateTenantSessionTransfer(
     tenantSchema,
     username,
     source,
+    redirectPath,
   } = params;
 
   if (!accessToken || !tenantDomain) {
@@ -94,7 +97,14 @@ export function initiateTenantSessionTransfer(
   hashParams.set("session", encoded);
   hashParams.set("source", source);
 
-  const destination = `${tenantOrigin}/login#${hashParams.toString()}`;
+  const queryParams = new URLSearchParams();
+  if (redirectPath) {
+    queryParams.set("redirect", redirectPath);
+  }
+
+  const querySegment = queryParams.toString();
+  const destinationPath = querySegment ? `/login?${querySegment}` : "/login";
+  const destination = `${tenantOrigin}${destinationPath}#${hashParams.toString()}`;
 
   logAuthEvent("TENANT_TRANSFER_INITIATED", {
     tenant: tenantName,

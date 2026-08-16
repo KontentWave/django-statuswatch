@@ -203,8 +203,32 @@ class MultiTenantLoginView(APIView):
                 )
 
         except self.auth_service_class.AuthenticationError as e:
-            logger.warning(f"[MULTI-TENANT-LOGIN] ✗ Login failed for user '{username}': {str(e)}")
-            return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+            error_message = str(e) if str(e) else "Invalid credentials"
+            error_payload = getattr(e, "error", None)
+            error_code = getattr(e, "code", None)
+            error_status = getattr(e, "status_code", None) or status.HTTP_401_UNAUTHORIZED
+
+            if error_payload is None:
+                if error_code:
+                    error_payload = {"code": error_code, "message": error_message}
+                else:
+                    error_payload = error_message
+
+            response_body: dict[str, object]
+            if isinstance(error_payload, dict):
+                response_body = {
+                    "error": error_payload,
+                    "detail": error_payload.get("message", error_message),
+                }
+            else:
+                response_body = {"error": error_payload, "detail": error_message}
+
+            logger.warning(
+                "[MULTI-TENANT-LOGIN] ✗ Login failed for user '%s': %s",
+                username,
+                error_message,
+            )
+            return Response(response_body, status=error_status)
 
         except Exception as e:
             logger.error(

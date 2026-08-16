@@ -11,7 +11,7 @@ const { navigateMock, postMock } = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
-    "@tanstack/react-router"
+    "@tanstack/react-router",
   );
   return {
     ...actual,
@@ -26,9 +26,12 @@ vi.mock("@/lib/api", () => ({
 }));
 
 describe("RegisterPage", () => {
+  const STORAGE_KEY = "statuswatch.registrationSuccess";
+
   beforeEach(() => {
     postMock.mockReset();
     navigateMock.mockReset();
+    window.sessionStorage.clear();
   });
 
   it("shows error for empty fields", async () => {
@@ -43,12 +46,12 @@ describe("RegisterPage", () => {
       await screen.findByText(
         /organization name is required/i,
         {},
-        { timeout: 3000 }
-      )
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(await screen.findByText(/email is required/i)).toBeInTheDocument();
     expect(
-      await screen.findByText(/password must be at least 12 characters/i)
+      await screen.findByText(/password must be at least 12 characters/i),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -68,8 +71,8 @@ describe("RegisterPage", () => {
       await screen.findByText(
         /password must be at least 12 characters/i,
         {},
-        { timeout: 3000 }
-      )
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -83,7 +86,7 @@ describe("RegisterPage", () => {
     await user.type(screen.getByLabelText(/^password$/i), "lowercase123!");
     await user.type(
       screen.getByLabelText(/confirm password/i),
-      "lowercase123!"
+      "lowercase123!",
     );
 
     await user.click(screen.getByRole("button", { name: /sign up/i }));
@@ -92,8 +95,8 @@ describe("RegisterPage", () => {
       await screen.findByText(
         /password must contain at least one uppercase/i,
         {},
-        { timeout: 3000 }
-      )
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -107,7 +110,7 @@ describe("RegisterPage", () => {
     await user.type(screen.getByLabelText(/^password$/i), "UPPERCASE123!");
     await user.type(
       screen.getByLabelText(/confirm password/i),
-      "UPPERCASE123!"
+      "UPPERCASE123!",
     );
 
     await user.click(screen.getByRole("button", { name: /sign up/i }));
@@ -116,8 +119,8 @@ describe("RegisterPage", () => {
       await screen.findByText(
         /password must contain at least one lowercase/i,
         {},
-        { timeout: 3000 }
-      )
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -131,7 +134,7 @@ describe("RegisterPage", () => {
     await user.type(screen.getByLabelText(/^password$/i), "NoNumbersHere!");
     await user.type(
       screen.getByLabelText(/confirm password/i),
-      "NoNumbersHere!"
+      "NoNumbersHere!",
     );
 
     await user.click(screen.getByRole("button", { name: /sign up/i }));
@@ -140,8 +143,8 @@ describe("RegisterPage", () => {
       await screen.findByText(
         /password must contain at least one number/i,
         {},
-        { timeout: 3000 }
-      )
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -155,7 +158,7 @@ describe("RegisterPage", () => {
     await user.type(screen.getByLabelText(/^password$/i), "NoSpecialChar123");
     await user.type(
       screen.getByLabelText(/confirm password/i),
-      "NoSpecialChar123"
+      "NoSpecialChar123",
     );
 
     await user.click(screen.getByRole("button", { name: /sign up/i }));
@@ -164,8 +167,8 @@ describe("RegisterPage", () => {
       await screen.findByText(
         /password must contain at least one special character/i,
         {},
-        { timeout: 3000 }
-      )
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
@@ -179,7 +182,7 @@ describe("RegisterPage", () => {
 
     await user.type(
       screen.getByLabelText(/organization name/i),
-      "Stark Industries"
+      "Stark Industries",
     );
     await user.type(screen.getByLabelText(/email/i), "tony@stark.com");
     await user.type(screen.getByLabelText(/^password$/i), "JarvisIsMyP@ssw0rd");
@@ -188,12 +191,12 @@ describe("RegisterPage", () => {
     await user.click(screen.getByRole("button", { name: /sign up/i }));
 
     expect(
-      await screen.findByText(/passwords must match/i, {}, { timeout: 3000 })
+      await screen.findByText(/passwords must match/i, {}, { timeout: 3000 }),
     ).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
 
-  it("submits form data and navigates to login on success", async () => {
+  it("shows inbox instructions and stores success payload on success", async () => {
     postMock.mockResolvedValue({
       data: { detail: "Registration successful. Please log in." },
     });
@@ -204,13 +207,13 @@ describe("RegisterPage", () => {
 
     await user.type(
       screen.getByLabelText(/organization name/i),
-      "Stark Industries"
+      "Stark Industries",
     );
     await user.type(screen.getByLabelText(/email/i), "tony@stark.com");
     await user.type(screen.getByLabelText(/^password$/i), "JarvisIsMyP@ssw0rd");
     await user.type(
       screen.getByLabelText(/confirm password/i),
-      "JarvisIsMyP@ssw0rd"
+      "JarvisIsMyP@ssw0rd",
     );
 
     await user.click(screen.getByRole("button", { name: /sign up/i }));
@@ -225,15 +228,25 @@ describe("RegisterPage", () => {
     });
 
     await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledTimes(1);
+      expect(postMock).toHaveBeenCalledTimes(1);
     });
 
-    const navigationArgs = navigateMock.mock.calls[0][0];
-    expect(navigationArgs.to).toBe("/login");
-    expect(navigationArgs.replace).toBe(true);
-    expect(typeof navigationArgs.state).toBe("function");
-    expect(navigationArgs.state(undefined)).toEqual({
-      message: "Registration successful. Please log in.",
+    const successPanel = await screen.findByTestId(
+      "registration-success",
+      {},
+      {
+        timeout: 3000,
+      },
+    );
+    expect(successPanel).toHaveTextContent(/check your inbox/i);
+    expect(successPanel).toHaveTextContent(/we sent a verification link/i);
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    const stored = window.sessionStorage.getItem(STORAGE_KEY);
+    expect(stored).not.toBeNull();
+    expect(JSON.parse(stored as string)).toMatchObject({
+      email: "tony@stark.com",
+      organization: "Stark Industries",
     });
   });
 
@@ -255,20 +268,40 @@ describe("RegisterPage", () => {
 
     await user.type(
       screen.getByLabelText(/organization name/i),
-      "Stark Industries"
+      "Stark Industries",
     );
     await user.type(screen.getByLabelText(/email/i), "tony@stark.com");
     await user.type(screen.getByLabelText(/^password$/i), "JarvisIsMyP@ssw0rd");
     await user.type(
       screen.getByLabelText(/confirm password/i),
-      "JarvisIsMyP@ssw0rd"
+      "JarvisIsMyP@ssw0rd",
     );
 
     await user.click(screen.getByRole("button", { name: /sign up/i }));
 
     expect(
-      await screen.findByText(/this email is already registered/i)
+      await screen.findByText(/this email is already registered/i),
     ).toBeInTheDocument();
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("restores success state from session storage", () => {
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        email: "saved@example.com",
+        organization: "Saved Org",
+        detail: "Registration successful",
+      }),
+    );
+
+    render(<RegisterPage />);
+
+    expect(screen.getByTestId("registration-success")).toHaveTextContent(
+      /check your inbox/i,
+    );
+    expect(
+      screen.getByText(/saved@example.com/i, { exact: false }),
+    ).toBeInTheDocument();
   });
 });

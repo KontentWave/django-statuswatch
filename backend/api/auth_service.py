@@ -14,12 +14,17 @@ Location: backend/api/auth_service.py
 """
 
 import logging
+from http import HTTPStatus
 from typing import Any
 
 from django.contrib.auth import authenticate
-from django.db import connection
+from django.db import connection, transaction
+from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 from tenants.models import Client
+
+from api.models import UserProfile
+from api.utils import send_verification_email
 
 logger = logging.getLogger("api.auth")
 
@@ -27,7 +32,18 @@ logger = logging.getLogger("api.auth")
 class MultiTenantAuthenticationError(Exception):
     """Raised when multi-tenant authentication fails"""
 
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        status_code: int | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+        self.error = error
 
 
 class MultiTenantAuthService:
@@ -37,6 +53,35 @@ class MultiTenantAuthService:
     This service is designed to work from the public schema and search
     all tenant schemas to find and authenticate users.
     """
+
+    @staticmethod
+    def _ensure_user_profile(user):
+        """Fetch or create a user profile inside the current tenant schema."""
+
+        with transaction.atomic():
+            profile = (
+                UserProfile.objects.select_for_update()
+                .filter(user=user)
+                .select_related("user")
+                .first()
+            )
+
+            created = False
+            if profile is None:
+                profile = UserProfile.objects.create(
+                    user=user,
+                    email_verified=False,
+                    email_verification_sent_at=timezone.now(),
+                )
+                created = True
+            else:
+                profile.refresh_from_db(fields=["email_verified", "email_verification_sent_at"])
+
+            if not profile.email_verified and profile.email_verification_sent_at is None:
+                profile.email_verification_sent_at = timezone.now()
+                profile.save(update_fields=["email_verification_sent_at", "updated_at"])
+
+            return profile, created
 
     @staticmethod
     def find_all_tenants_for_email(email: str) -> list[dict[str, Any]]:
@@ -294,6 +339,28 @@ class MultiTenantAuthService:
                 f"[MULTI-TENANT-AUTH] ✓ Authentication successful for user '{username}' "
                 f"in tenant '{tenant_name}'"
             )
+
+            profile, profile_created = MultiTenantAuthService._ensure_user_profile(user)
+
+            if profile_created:
+                send_verification_email(user, profile.email_verification_token)
+
+            if not profile.email_verified:
+                message = (
+                    "Email not verified. Please verify your address via the link in your inbox "
+                    "or request a new verification email."
+                )
+                logger.warning(
+                    "[MULTI-TENANT-AUTH] Login blocked for unverified user '%s' in tenant '%s'",
+                    username,
+                    tenant_name,
+                )
+                raise MultiTenantAuthenticationError(
+                    message,
+                    code="email_unverified",
+                    status_code=int(HTTPStatus.FORBIDDEN),
+                    error={"code": "email_unverified", "message": message},
+                )
 
             # Step 3: Generate JWT tokens
             refresh = RefreshToken.for_user(user)

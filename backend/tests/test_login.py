@@ -10,8 +10,10 @@ in conftest.py and apply automatically to all tests.
 import json
 
 import pytest
+from api.models import UserProfile
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.utils import timezone
 from django.utils.text import slugify
 from django_tenants.utils import schema_context
 from psycopg import sql
@@ -94,6 +96,14 @@ def stark_industries_tenant(db):
         owner_group, _ = Group.objects.get_or_create(name="Owner")
         user.groups.add(owner_group)
 
+        UserProfile.objects.update_or_create(
+            user=user,
+            defaults={
+                "email_verified": True,
+                "email_verification_sent_at": timezone.now(),
+            },
+        )
+
     fixture_data = {
         "tenant": tenant,
         "user": user,
@@ -121,8 +131,10 @@ def stark_industries_tenant(db):
     _drop_tenant_schema_and_metadata(schema_name, tenant.id)
 
 
-def _post_json(client, url, payload, http_host="testserver"):
+def _post_json(client, url, payload, http_host="test.localhost"):
     """Helper to POST JSON data with optional HTTP_HOST header for tenant routing."""
+    # Rely on middleware/TenantClient to bind tenant; keep connection unchanged here
+
     return client.post(
         url, data=json.dumps(payload), content_type="application/json", HTTP_HOST=http_host
     )
@@ -162,6 +174,37 @@ def test_login_with_valid_credentials_returns_jwt_tokens(client, stark_industrie
     assert len(data["access"]) > 20  # JWT tokens are long strings
 
 
+def test_login_rejected_until_email_verified(client, stark_industries_tenant):
+    """
+    GIVEN a user exists but has not verified their email
+    WHEN they attempt to log in
+    THEN the API returns 403 with an email_unverified error payload
+    """
+
+    schema_name = stark_industries_tenant["schema"]
+    with schema_context(schema_name):
+        profile = UserProfile.objects.get(user__email="tony@stark.com")
+        profile.email_verified = False
+        profile.save()
+
+    payload = {
+        "username": stark_industries_tenant["username"],
+        "password": stark_industries_tenant["password"],
+    }
+
+    response = _post_json(
+        client,
+        "/api/auth/token/",
+        payload,
+        http_host=stark_industries_tenant["domain"],
+    )
+
+    assert response.status_code == 403
+    data = response.json()
+    assert data.get("error", {}).get("code") == "email_unverified"
+    assert "verify" in data.get("error", {}).get("message", "").lower()
+
+
 def test_login_with_invalid_password_returns_401(client, stark_industries_tenant):
     """
     GIVEN a registered user exists
@@ -189,12 +232,18 @@ def test_login_with_nonexistent_user_returns_401(client):
     WHEN attempting to log in
     THEN the API returns 401 (no user enumeration)
     """
+    from django_tenants.test.client import TenantClient
+    from tenants.models import Client
+
+    tenant = Client.objects.filter(schema_name="test_tenant").first()
+    tenant_client = TenantClient(tenant) if tenant else client
+
     payload = {
         "username": "nonexistent@example.com",
         "password": "anypassword",
     }
 
-    response = _post_json(client, "/api/auth/token/", payload)
+    response = _post_json(tenant_client, "/api/auth/token/", payload)
 
     assert response.status_code == 401
     data = response.json()

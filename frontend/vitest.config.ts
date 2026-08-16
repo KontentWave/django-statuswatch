@@ -16,5 +16,11 @@ export default defineConfig({
     css: true,
     minThreads: 1,
     maxThreads: 1,
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/e2e/**",
+      "**/playwright-report/**",
+    ],
   },
 });

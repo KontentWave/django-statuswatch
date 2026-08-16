@@ -60,6 +60,10 @@ PUBLIC_SCHEMA_NAME = CORE_PUBLIC_SCHEMA_NAME
 # Allow internal requests (e.g., from Caddy with Host: web:8000) to use public schema
 SHOW_PUBLIC_IF_NO_TENANT_FOUND = CORE_SHOW_PUBLIC_IF_NO_TENANT_FOUND
 
+# Override the implicit Django test host to a known tenant domain during tests
+TEST_TENANT_TRIGGER_HOST = env("TEST_TENANT_TRIGGER_HOST", default="testserver")
+TEST_TENANT_HTTP_HOST = env("TEST_TENANT_HTTP_HOST", default="test.localhost")
+
 SHARED_APPS: tuple[str, ...] = tuple(get_shared_apps())
 TENANT_APPS: tuple[str, ...] = tuple(get_tenant_apps())
 

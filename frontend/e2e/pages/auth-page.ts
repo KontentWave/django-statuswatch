@@ -29,19 +29,16 @@ export class AuthPage {
       .fill(formInput.password);
 
     const submit = this.page.getByRole("button", { name: /sign up/i });
-    await Promise.all([this.page.waitForURL(/\/login$/), submit.click()]);
+    await submit.click();
+    await this.expectRegistrationSuccessPanel(formInput.email);
   }
 
-  async expectLoginRedirectWithSuccess(
-    messageSubstring = "Registration successful"
-  ): Promise<void> {
-    await expect(this.page).toHaveURL(/\/login$/);
-    const successBanner = this.page.getByText(messageSubstring, {
-      exact: false,
-    });
-    await expect(successBanner).toBeVisible();
+  async expectRegistrationSuccessPanel(email: string): Promise<void> {
+    const successPanel = this.page.getByTestId("registration-success");
+    await expect(successPanel).toBeVisible();
     await expect(
-      this.page.getByRole("heading", { name: /sign in to statuswatch/i })
+      successPanel.getByText(/check your inbox/i, { exact: false })
     ).toBeVisible();
+    await expect(successPanel.getByText(email, { exact: false })).toBeVisible();
   }
 }

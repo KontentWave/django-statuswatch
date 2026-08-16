@@ -16,8 +16,8 @@ test.describe("Registration", () => {
       await authPage.completeRegistration(registration);
     });
 
-    await test.step("Verify redirect and success toast", async () => {
-      await authPage.expectLoginRedirectWithSuccess();
+    await test.step("Verify inbox instructions are shown", async () => {
+      await authPage.expectRegistrationSuccessPanel(registration.email);
     });
   });
 });

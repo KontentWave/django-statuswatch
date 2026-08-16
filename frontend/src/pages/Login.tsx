@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { AxiosError } from "axios";
@@ -9,6 +9,34 @@ import { customZodResolver } from "@/lib/zodResolver";
 import { storeAuthTokens } from "@/lib/auth";
 import { logAuthEvent } from "@/lib/auth-logger";
 import { initiateTenantSessionTransfer } from "@/lib/tenant-session";
+import type { AllowedRedirectPath } from "@/lib/redirects";
+import { DEFAULT_REDIRECT, sanitizeRedirectPath } from "@/lib/redirects";
+const RESEND_GENERIC_MESSAGE =
+  "If an account exists for this email, we've sent a fresh verification link.";
+
+const RESEND_ERROR_FALLBACK =
+  "We couldn't resend the verification email. Please try again.";
+
+const extractMessage = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    "message" in value &&
+    typeof (value as { message?: unknown }).message === "string"
+  ) {
+    return (value as { message: string }).message;
+  }
+
+  return null;
+};
+
+const resolveMessage = (value: unknown, fallback: string): string => {
+  return extractMessage(value) ?? fallback;
+};
 
 const loginSchema = z.object({
   email: z
@@ -54,6 +82,11 @@ export default function LoginPage() {
   const location = useLocation();
   const [formError, setFormError] = useState<string | null>(null);
   const [isApplyingTransfer, setIsApplyingTransfer] = useState(false);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState<
+    string | null
+  >(null);
+  const [resendStatus, setResendStatus] = useState<string | null>(null);
+  const [isResending, setIsResending] = useState(false);
   const transferHandledRef = useRef(false);
 
   // Tenant selection state
@@ -110,9 +143,20 @@ export default function LoginPage() {
         hasRefresh: !!decoded.refresh,
         source: params.get("source") ?? decoded.source ?? "unknown",
       });
+      const rawSearch = window.location.search ?? "";
+      const normalizedSearch = rawSearch
+        ? rawSearch.startsWith("?")
+          ? rawSearch
+          : `?${rawSearch}`
+        : "";
+      const redirectParams = new URLSearchParams(normalizedSearch);
+      const redirectCandidate = sanitizeRedirectPath(
+        redirectParams.get("redirect") ?? redirectParams.get("next")
+      );
+      const destination = redirectCandidate ?? DEFAULT_REDIRECT;
 
       window.history.replaceState(null, "", window.location.pathname);
-      void navigate({ to: "/dashboard", replace: true });
+      void navigate({ to: destination, replace: true });
     } catch (error) {
       logAuthEvent("TENANT_TRANSFER_FAILED", {
         source: params.get("source") ?? "unknown",
@@ -136,18 +180,29 @@ export default function LoginPage() {
     return null;
   }, [location.state]);
 
-  const redirectTo = useMemo<"/dashboard" | null>(() => {
+  const redirectFromState = useMemo<AllowedRedirectPath | null>(() => {
     const state = location.state;
     if (state && typeof state === "object" && "redirectTo" in state) {
       const destination = (state as { redirectTo?: unknown }).redirectTo;
-      return destination === "/dashboard" ? "/dashboard" : null;
+      return sanitizeRedirectPath(destination);
     }
     return null;
   }, [location.state]);
 
+  const redirectFromQuery = useMemo<AllowedRedirectPath | null>(() => {
+    const search = location.searchStr ?? location.search ?? "";
+    const normalized = search.startsWith("?") ? search : `?${search}`;
+    const params = new URLSearchParams(normalized);
+    const destination = params.get("redirect") ?? params.get("next");
+    return sanitizeRedirectPath(destination);
+  }, [location.search, location.searchStr]);
+
+  const redirectTo = redirectFromState ?? redirectFromQuery;
+
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<LoginFormValues>({
     resolver: customZodResolver(loginSchema),
@@ -158,8 +213,20 @@ export default function LoginPage() {
     },
   });
 
+  const currentEmailValue = watch("email");
+
+  useEffect(() => {
+    setPendingVerificationEmail(null);
+    setResendStatus(null);
+  }, [currentEmailValue]);
+
+  const emailUnverifiedMessage =
+    "Email not verified. Please check your inbox for the verification link before signing in.";
+
   const onSubmit = async (values: LoginFormValues) => {
     setFormError(null);
+    setPendingVerificationEmail(null);
+    setResendStatus(null);
     logAuthEvent("LOGIN_ATTEMPT", {
       username: values.email,
       source: "login_page",
@@ -217,6 +284,7 @@ export default function LoginPage() {
           tenantSchema: data?.tenant_schema,
           username: values.email,
           source: "login_page",
+          redirectPath: redirectTo ?? null,
         });
       }
 
@@ -228,7 +296,7 @@ export default function LoginPage() {
       setIsApplyingTransfer(false);
 
       // Fallback: navigate within same origin
-      const destination = (redirectTo ?? "/dashboard") as "/dashboard";
+      const destination = redirectTo ?? DEFAULT_REDIRECT;
       logAuthEvent("NAVIGATION_TO_DASHBOARD", {
         from: "login_page",
         username: values.email,
@@ -242,6 +310,8 @@ export default function LoginPage() {
       let errorMessage: string | null = null;
       const errorData = error.response?.data?.error;
 
+      let errorCode: string | null = null;
+
       if (typeof errorData === "string") {
         errorMessage = errorData;
       } else if (
@@ -250,6 +320,16 @@ export default function LoginPage() {
         "message" in errorData
       ) {
         errorMessage = (errorData as { message: string }).message;
+        if ("code" in errorData && typeof errorData.code === "string") {
+          errorCode = errorData.code;
+        }
+      } else if (
+        errorData &&
+        typeof errorData === "object" &&
+        "code" in errorData &&
+        typeof errorData.code === "string"
+      ) {
+        errorCode = errorData.code;
       }
 
       // Fallback to detail or generic message
@@ -266,9 +346,46 @@ export default function LoginPage() {
         source: "login_page",
       });
       setIsApplyingTransfer(false);
+      if (errorCode === "email_unverified") {
+        setPendingVerificationEmail(values.email);
+        setFormError(emailUnverifiedMessage);
+        return;
+      }
+
       setFormError(errorMessage);
     }
   };
+
+  const handleResendVerification = useCallback(async () => {
+    if (!pendingVerificationEmail) {
+      return;
+    }
+
+    setIsResending(true);
+    setResendStatus(null);
+
+    try {
+      const { data } = await api.post<{ detail?: unknown; error?: unknown }>(
+        "/auth/resend-verification/",
+        { email: pendingVerificationEmail }
+      );
+
+      const detail = resolveMessage(data?.detail, RESEND_GENERIC_MESSAGE);
+      setResendStatus(detail);
+    } catch (error) {
+      const axiosError = error as AxiosError<{
+        detail?: unknown;
+        error?: unknown;
+      }>;
+      const detail = resolveMessage(
+        axiosError.response?.data?.detail ?? axiosError.response?.data?.error,
+        RESEND_ERROR_FALLBACK
+      );
+      setResendStatus(detail);
+    } finally {
+      setIsResending(false);
+    }
+  }, [pendingVerificationEmail]);
 
   return (
     <div className="mx-auto max-w-md space-y-6 p-6">
@@ -326,8 +443,35 @@ export default function LoginPage() {
         </div>
 
         {formError && (
-          <div className="rounded border border-red-200 bg-red-50 p-3">
-            <p className="text-sm text-red-600">{formError}</p>
+          <div
+            className={`rounded border p-3 ${
+              pendingVerificationEmail
+                ? "border-amber-300 bg-amber-50"
+                : "border-red-200 bg-red-50"
+            }`}
+          >
+            <p
+              className={`text-sm ${
+                pendingVerificationEmail ? "text-amber-900" : "text-red-600"
+              }`}
+            >
+              {formError}
+            </p>
+            {pendingVerificationEmail && (
+              <div className="mt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={isResending}
+                  className="w-full rounded border border-amber-400 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isResending ? "Resending…" : "Resend Verification Email"}
+                </button>
+                {resendStatus && (
+                  <p className="text-sm text-amber-900">{resendStatus}</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -429,6 +573,7 @@ export default function LoginPage() {
                     tenantSchema: data?.tenant_schema,
                     username: loginCredentials.email,
                     source: "tenant_selector",
+                    redirectPath: redirectTo ?? null,
                   });
                 }
 
@@ -445,6 +590,8 @@ export default function LoginPage() {
                 let errorMessage: string | null = null;
                 const errorData = error.response?.data?.error;
 
+                let errorCode: string | null = null;
+
                 if (typeof errorData === "string") {
                   errorMessage = errorData;
                 } else if (
@@ -453,6 +600,19 @@ export default function LoginPage() {
                   "message" in errorData
                 ) {
                   errorMessage = (errorData as { message: string }).message;
+                  if (
+                    "code" in errorData &&
+                    typeof (errorData as { code?: unknown }).code === "string"
+                  ) {
+                    errorCode = (errorData as { code?: string }).code ?? null;
+                  }
+                } else if (
+                  errorData &&
+                  typeof errorData === "object" &&
+                  "code" in errorData &&
+                  typeof errorData.code === "string"
+                ) {
+                  errorCode = errorData.code;
                 }
 
                 // Fallback to detail or generic message
@@ -469,7 +629,12 @@ export default function LoginPage() {
                   error: errorMessage,
                 });
                 setIsApplyingTransfer(false);
-                setFormError(errorMessage);
+                if (errorCode === "email_unverified") {
+                  setPendingVerificationEmail(loginCredentials.email);
+                  setFormError(emailUnverifiedMessage);
+                } else {
+                  setFormError(errorMessage);
+                }
               }
             }}
             disabled={!selectedTenant || isApplyingTransfer}

@@ -14,7 +14,9 @@ Target Coverage: 80%+ (currently 22%)
 """
 
 import pytest
+from api.models import UserProfile
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django_tenants.utils import schema_context
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -25,32 +27,17 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
-def public_api_client(db, monkeypatch):
+def public_api_client(db):
     """
-    Create API client that bypasses tenant middleware routing.
+    Create API client that simulates access via a public domain.
 
-    This simulates centralized login (SCENARIO 2) by preventing TenantMiddleware
-    from setting request.tenant, which forces current_schema = 'public' in the view.
+    This ensures request.tenant is NOT set to a specific tenant (or falls back to public),
+    triggering SCENARIO 2 (Centralized Login) in MultiTenantLoginView.
 
-    The view then searches ALL tenant schemas to find the user (centralized login),
-    rather than being restricted to a single tenant (subdomain login).
-
-    Used for tests validating centralized login behavior:
-    - test_user_in_single_tenant_auto_login
-    - test_user_in_multiple_tenants_returns_selection
-    - test_centralized_login_searches_all_tenants
-    - test_response_includes_tenant_domain
+    We use a domain that is NOT mapped to 'test_tenant' (which is mapped to 'testserver').
+    Relies on SHOW_PUBLIC_IF_NO_TENANT_FOUND=True to fall back to public schema.
     """
-    from django_tenants.middleware.main import TenantMainMiddleware
-
-    def mock_process_request(self, request):
-        # Don't set request.tenant - this makes current_schema = 'public'
-        # in multi_tenant_auth.py line 107, triggering SCENARIO 2
-        return None
-
-    monkeypatch.setattr(TenantMainMiddleware, "process_request", mock_process_request)
-
-    return APIClient()
+    return APIClient(HTTP_HOST="public.localhost")
 
 
 @pytest.fixture
@@ -126,6 +113,50 @@ def user_in_multiple_tenants(tenant_factory):
     }
 
 
+def _mark_profile_verified(user, schema_name):
+    """Mark the given user's profile as verified inside the specified schema."""
+
+    with schema_context(schema_name):
+        profile, _created = UserProfile.objects.get_or_create(user=user)
+        profile.email_verified = True
+        profile.email_verification_token = None
+        profile.email_verification_sent_at = timezone.now()
+        profile.save(
+            update_fields=[
+                "email_verified",
+                "email_verification_token",
+                "email_verification_sent_at",
+                "updated_at",
+            ]
+        )
+
+
+@pytest.fixture
+def verified_user_in_single_tenant(user_in_single_tenant):
+    """Return single-tenant user data after marking the profile verified."""
+
+    _mark_profile_verified(
+        user_in_single_tenant["user"],
+        user_in_single_tenant["tenant"].schema_name,
+    )
+    return user_in_single_tenant
+
+
+@pytest.fixture
+def verified_user_in_multiple_tenants(user_in_multiple_tenants):
+    """Return multi-tenant user data after marking both tenant profiles verified."""
+
+    _mark_profile_verified(
+        user_in_multiple_tenants["user1"],
+        user_in_multiple_tenants["tenant1"].schema_name,
+    )
+    _mark_profile_verified(
+        user_in_multiple_tenants["user2"],
+        user_in_multiple_tenants["tenant2"].schema_name,
+    )
+    return user_in_multiple_tenants
+
+
 class TestMultiTenantLogin:
     """Test multi-tenant login scenarios."""
 
@@ -184,16 +215,32 @@ class TestMultiTenantLogin:
 
     def test_user_in_single_tenant_auto_login(self, public_api_client, user_in_single_tenant):
         """
-        When user exists in ONLY ONE tenant, should auto-login without tenant selection.
-
-        Uses public_api_client to simulate centralized login (SCENARIO 2).
-        Expected: 200 OK with JWT tokens and tenant info.
+        Unverified users are blocked even when only one tenant match exists.
         """
         response = public_api_client.post(
             "/api/auth/login/",
             {
                 "username": user_in_single_tenant["email"],
                 "password": user_in_single_tenant["password"],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        error = response.data.get("error", {})
+        assert error.get("code") == "email_unverified"
+        assert "verify" in error.get("message", "").lower()
+
+    def test_user_in_single_tenant_auto_login_when_verified(
+        self, public_api_client, verified_user_in_single_tenant
+    ):
+        """Verified users with a single tenant receive tokens automatically."""
+
+        response = public_api_client.post(
+            "/api/auth/login/",
+            {
+                "username": verified_user_in_single_tenant["email"],
+                "password": verified_user_in_single_tenant["password"],
             },
             format="json",
         )
@@ -208,16 +255,18 @@ class TestMultiTenantLogin:
         assert len(response.data["access"]) > 100  # JWT tokens are long
 
         # Verify tenant info returned
-        assert response.data["tenant_schema"] == user_in_single_tenant["tenant"].schema_name
-        assert response.data["tenant_name"] == user_in_single_tenant["tenant"].name
+        assert (
+            response.data["tenant_schema"] == verified_user_in_single_tenant["tenant"].schema_name
+        )
+        assert response.data["tenant_name"] == verified_user_in_single_tenant["tenant"].name
         assert "tenant_domain" in response.data
 
         # Verify user info returned
         assert "user" in response.data
         user_data = response.data["user"]
-        assert user_data["id"] == user_in_single_tenant["user"].id
-        assert user_data["email"] == user_in_single_tenant["email"]
-        assert user_data["username"] == user_in_single_tenant["email"]
+        assert user_data["id"] == verified_user_in_single_tenant["user"].id
+        assert user_data["email"] == verified_user_in_single_tenant["email"]
+        assert user_data["username"] == verified_user_in_single_tenant["email"]
         assert user_data["first_name"] == "Alice"
         assert user_data["last_name"] == "Acme"
 
@@ -275,9 +324,7 @@ class TestMultiTenantLogin:
 
     def test_tenant_selection_with_valid_tenant(self, api_client, user_in_multiple_tenants):
         """
-        After receiving tenant options, user selects a specific tenant.
-
-        Expected: 200 OK with JWT tokens for selected tenant.
+        Unverified users are blocked even after selecting a valid tenant.
         """
         # Select the first tenant
         selected_schema = user_in_multiple_tenants["tenant1"].schema_name
@@ -292,17 +339,33 @@ class TestMultiTenantLogin:
             format="json",
         )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        error = response.data.get("error", {})
+        assert error.get("code") == "email_unverified"
+        assert "verify" in error.get("message", "").lower()
 
-        # Should return JWT tokens now
+    def test_tenant_selection_with_valid_tenant_when_verified(
+        self, api_client, verified_user_in_multiple_tenants
+    ):
+        """Verified users obtain tokens after selecting a tenant."""
+
+        selected_schema = verified_user_in_multiple_tenants["tenant1"].schema_name
+
+        response = api_client.post(
+            "/api/auth/login/",
+            {
+                "username": verified_user_in_multiple_tenants["email"],
+                "password": verified_user_in_multiple_tenants["password"],
+                "tenant_schema": selected_schema,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
         assert "access" in response.data
         assert "refresh" in response.data
-
-        # Should return info for SELECTED tenant only
         assert response.data["tenant_schema"] == selected_schema
-        assert response.data["tenant_name"] == user_in_multiple_tenants["tenant1"].name
-
-        # Should NOT return tenant selection anymore
+        assert response.data["tenant_name"] == verified_user_in_multiple_tenants["tenant1"].name
         assert "multiple_tenants" not in response.data
         assert "tenants" not in response.data
 
@@ -329,9 +392,7 @@ class TestMultiTenantLogin:
 
     def test_login_from_tenant_subdomain(self, api_client, user_in_single_tenant):
         """
-        User logs in from a tenant-specific subdomain (e.g., acme.localhost:5173/login).
-
-        Expected: Should only search that tenant's schema.
+        Tenant-specific login is blocked until the email is verified.
         """
         tenant = user_in_single_tenant["tenant"]
 
@@ -344,6 +405,28 @@ class TestMultiTenantLogin:
                 "username": user_in_single_tenant["email"],
                 "password": user_in_single_tenant["password"],
                 "tenant_schema": tenant.schema_name,  # Subdomain context
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        error = response.data.get("error", {})
+        assert error.get("code") == "email_unverified"
+        assert "verify" in error.get("message", "").lower()
+
+    def test_login_from_tenant_subdomain_when_verified(
+        self, api_client, verified_user_in_single_tenant
+    ):
+        """Verified tenant-specific logins succeed and return tokens."""
+
+        tenant = verified_user_in_single_tenant["tenant"]
+
+        response = api_client.post(
+            "/api/auth/login/",
+            {
+                "username": verified_user_in_single_tenant["email"],
+                "password": verified_user_in_single_tenant["password"],
+                "tenant_schema": tenant.schema_name,
             },
             format="json",
         )
@@ -379,10 +462,7 @@ class TestMultiTenantLogin:
 
     def test_centralized_login_searches_all_tenants(self, public_api_client, user_in_single_tenant):
         """
-        User logs in from centralized hub (localhost:5173/login, no subdomain).
-
-        Uses public_api_client to simulate centralized login (SCENARIO 2).
-        Expected: Should search all tenants to find the user.
+        Centralized login locates the user but blocks until verification.
         """
         # Don't specify tenant_schema - this simulates centralized login
         response = public_api_client.post(
@@ -395,8 +475,28 @@ class TestMultiTenantLogin:
             format="json",
         )
 
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        error = response.data.get("error", {})
+        assert error.get("code") == "email_unverified"
+
+    def test_centralized_login_searches_all_tenants_when_verified(
+        self, public_api_client, verified_user_in_single_tenant
+    ):
+        """Centralized login succeeds once the email address is verified."""
+
+        response = public_api_client.post(
+            "/api/auth/login/",
+            {
+                "username": verified_user_in_single_tenant["email"],
+                "password": verified_user_in_single_tenant["password"],
+            },
+            format="json",
+        )
+
         assert response.status_code == status.HTTP_200_OK
-        assert response.data["tenant_schema"] == user_in_single_tenant["tenant"].schema_name
+        assert (
+            response.data["tenant_schema"] == verified_user_in_single_tenant["tenant"].schema_name
+        )
         assert "access" in response.data
 
 
@@ -443,17 +543,16 @@ class TestMultiTenantLoginEdgeCases:
         assert user_in_single_tenant["password"].lower() not in response_str
         assert "password" not in response.data
 
-    def test_response_includes_tenant_domain(self, public_api_client, user_in_single_tenant):
-        """
-        Response should include tenant's primary domain for frontend redirect.
+    def test_response_includes_tenant_domain_when_verified(
+        self, public_api_client, verified_user_in_single_tenant
+    ):
+        """Successful centralized responses include tenant domain for redirects."""
 
-        Uses public_api_client to simulate centralized login (SCENARIO 2).
-        """
         response = public_api_client.post(
             "/api/auth/login/",
             {
-                "username": user_in_single_tenant["email"],
-                "password": user_in_single_tenant["password"],
+                "username": verified_user_in_single_tenant["email"],
+                "password": verified_user_in_single_tenant["password"],
             },
             format="json",
         )

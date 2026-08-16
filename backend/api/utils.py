@@ -5,6 +5,7 @@ Handles sending verification emails, password resets, and other transactional em
 """
 
 import logging
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core.mail import send_mail
@@ -26,7 +27,9 @@ def send_verification_email(user, verification_token):
         bool: True if email sent successfully, False otherwise
     """
     # Build verification URL
-    verification_url = f"{settings.FRONTEND_URL}/verify-email/{verification_token}"
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    token_query = urlencode({"token": str(verification_token)})
+    verification_url = f"{base_url}/verify-email?{token_query}"
 
     # Email context
     context = {

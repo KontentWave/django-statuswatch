@@ -3,7 +3,7 @@ from __future__ import annotations
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.utils.text import slugify
-from modules.tenancy.provisioning import TenantProvisioner
+from modules.tenancy.provisioning import RESERVED_SUBDOMAIN_SLUGS, TenantProvisioner
 from rest_framework import serializers
 
 from api.performance_log import log_performance
@@ -51,6 +51,11 @@ class RegistrationSerializer(serializers.Serializer):
         slug = slugify(value)
         if not slug:
             raise serializers.ValidationError("Organization name must contain letters or numbers.")
+
+        if slug in RESERVED_SUBDOMAIN_SLUGS:
+            raise serializers.ValidationError(
+                "This organization name is reserved. Please choose another name."
+            )
         return value
 
     def validate_password(self, value: str) -> str:

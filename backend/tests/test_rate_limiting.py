@@ -22,6 +22,12 @@ def clear_throttle_cache():
     cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def enable_rate_limiting(settings):
+    """Force rate limiting on so tests exercise throttle behavior even in dev."""
+    settings.API_RATE_LIMITING_ENABLED = True
+
+
 @pytest.fixture
 def api_client():
     """Create API client for testing."""

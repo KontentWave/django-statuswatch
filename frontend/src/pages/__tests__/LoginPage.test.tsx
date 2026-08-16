@@ -14,14 +14,19 @@ import LoginPage from "@/pages/Login";
 
 const assignMock = vi.fn();
 
-const { navigateMock, postMock, storeTokensMock, locationState } = vi.hoisted(
-  () => ({
-    navigateMock: vi.fn(),
-    postMock: vi.fn(),
-    storeTokensMock: vi.fn(),
-    locationState: { current: undefined as unknown },
-  })
-);
+const {
+  navigateMock,
+  postMock,
+  storeTokensMock,
+  locationState,
+  locationSearch,
+} = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
+  postMock: vi.fn(),
+  storeTokensMock: vi.fn(),
+  locationState: { current: undefined as unknown },
+  locationSearch: { current: "" },
+}));
 
 vi.mock("@tanstack/react-router", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
@@ -33,12 +38,12 @@ vi.mock("@tanstack/react-router", async () => {
     useLocation: () =>
       ({
         pathname: "/login",
-        search: "",
+        search: locationSearch.current,
         hash: "",
         key: "test",
         params: {},
         href: "/login",
-        searchStr: "",
+        searchStr: locationSearch.current,
         publicHref: "/login",
         url: new URL("http://localhost/login"),
         state: locationState.current,
@@ -92,8 +97,10 @@ describe("LoginPage", () => {
     navigateMock.mockReset();
     storeTokensMock.mockReset();
     locationState.current = undefined;
+    locationSearch.current = "";
     assignMock.mockReset();
     window.location.hash = "";
+    window.location.search = "";
   });
 
   it("requires email and password", async () => {
@@ -151,6 +158,95 @@ describe("LoginPage", () => {
     });
 
     expect(assignMock).not.toHaveBeenCalled();
+  });
+
+  it("navigates to an allowed redirect path when provided", async () => {
+    postMock.mockResolvedValue({
+      data: {
+        access: "access-token",
+        refresh: "refresh-token",
+        tenant_domain: undefined,
+      },
+    });
+
+    locationState.current = { redirectTo: "/billing" };
+
+    render(<LoginPage />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/password/i), "Password123!");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => {
+      expect(storeTokensMock).toHaveBeenCalledWith({
+        access: "access-token",
+        refresh: "refresh-token",
+      });
+    });
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/billing",
+        replace: true,
+      });
+    });
+  });
+
+  it("falls back to dashboard when redirect path is invalid", async () => {
+    postMock.mockResolvedValue({
+      data: {
+        access: "access-token",
+        refresh: "refresh-token",
+        tenant_domain: undefined,
+      },
+    });
+
+    locationState.current = { redirectTo: "/unknown" };
+
+    render(<LoginPage />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/password/i), "Password123!");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => {
+      expect(storeTokensMock).toHaveBeenCalled();
+    });
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/dashboard",
+        replace: true,
+      });
+    });
+  });
+
+  it("uses redirect query parameter when no state is provided", async () => {
+    postMock.mockResolvedValue({
+      data: {
+        access: "access-token",
+        refresh: "refresh-token",
+        tenant_domain: undefined,
+      },
+    });
+
+    locationSearch.current = "?redirect=/billing";
+
+    render(<LoginPage />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/password/i), "Password123!");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/billing",
+        replace: true,
+      });
+    });
   });
 
   it("shows API error message when credentials are invalid", async () => {
@@ -215,6 +311,37 @@ describe("LoginPage", () => {
     expect(navigateMock).not.toHaveBeenCalled();
   });
 
+  it("persists redirect preference through tenant transfer", async () => {
+    postMock.mockResolvedValue({
+      data: {
+        access: "access-token",
+        refresh: "refresh-token",
+        tenant_domain: "acme.localhost",
+        tenant_schema: "acme",
+        tenant_name: "Acme",
+      },
+    });
+
+    locationState.current = { redirectTo: "/billing" };
+
+    render(<LoginPage />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/password/i), "Password123!");
+
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await waitFor(() => {
+      expect(assignMock).toHaveBeenCalledTimes(1);
+    });
+
+    const targetUrl = assignMock.mock.calls[0]?.[0] as string;
+    expect(targetUrl).toMatch(
+      /^https:\/\/acme\.localhost:5173\/login\?redirect=%2Fbilling#session=/
+    );
+  });
+
   it("renders registration success message from navigation state", () => {
     locationState.current = {
       message: "Registration successful. Please log in.",
@@ -225,6 +352,47 @@ describe("LoginPage", () => {
     expect(
       screen.getByText(/registration successful\. please log in\./i)
     ).toBeInTheDocument();
+  });
+
+  it("shows verification alert and allows resending when backend rejects unverified logins", async () => {
+    postMock.mockRejectedValueOnce({
+      response: {
+        status: 403,
+        data: {
+          error: {
+            code: "email_unverified",
+            message: "Email not verified. Please check your inbox.",
+          },
+        },
+      },
+    });
+
+    postMock.mockResolvedValueOnce({
+      data: { detail: "Resent" },
+    });
+
+    render(<LoginPage />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/email/i), "user@example.com");
+    await user.type(screen.getByLabelText(/password/i), "Password123!");
+
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(
+      await screen.findByText(/email not verified/i, {}, { timeout: 3000 })
+    ).toBeInTheDocument();
+
+    const resendButton = screen.getByRole("button", {
+      name: /resend verification email/i,
+    });
+    await user.click(resendButton);
+
+    const resendCall = postMock.mock.calls.find(
+      ([endpoint]) => endpoint === "/auth/resend-verification/"
+    );
+    expect(resendCall).toBeTruthy();
+    expect(resendCall?.[1]).toEqual({ email: "user@example.com" });
   });
 
   it("consumes session transfer payload from hash on mount", async () => {
@@ -258,6 +426,41 @@ describe("LoginPage", () => {
     expect(assignMock).not.toHaveBeenCalled();
 
     window.location.hash = "";
+  });
+
+  it("navigates to requested redirect after session transfer", async () => {
+    const payload = {
+      access: "hash-access",
+      refresh: "hash-refresh",
+      tenant_schema: "acme",
+      tenant_name: "Acme",
+      source: "login_page",
+    };
+    window.location.hash = `session=${btoa(
+      JSON.stringify(payload)
+    )}&source=login_page`;
+    window.location.search = "?redirect=/billing";
+    locationSearch.current = "?redirect=/billing";
+
+    render(<LoginPage />);
+
+    await waitFor(() => {
+      expect(storeTokensMock).toHaveBeenCalledWith({
+        access: "hash-access",
+        refresh: "hash-refresh",
+      });
+    });
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith({
+        to: "/billing",
+        replace: true,
+      });
+    });
+
+    window.location.hash = "";
+    window.location.search = "";
+    locationSearch.current = "";
   });
 
   it("navigates locally when tenant domain matches current origin", async () => {

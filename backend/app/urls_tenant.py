@@ -1,3 +1,4 @@
+from api.views import TokenObtainPairWithLoggingView
 from django.http import HttpResponse
 from django.urls import include, path
 from modules.core.urls import (
@@ -8,7 +9,6 @@ from modules.core.urls import (
     multi_tenant_login_urlpatterns,
     payment_urlpatterns,
 )
-from rest_framework_simplejwt.views import TokenObtainPairView
 
 urlpatterns = (
     admin_urlpatterns()
@@ -23,5 +23,5 @@ urlpatterns = (
     ]
 )
 
-urlpatterns += jwt_token_urlpatterns(TokenObtainPairView, include_verify=True)
+urlpatterns += jwt_token_urlpatterns(TokenObtainPairWithLoggingView, include_verify=True)
 urlpatterns += [path("", lambda r: HttpResponse("tenant OK"), name="tenant-home")]

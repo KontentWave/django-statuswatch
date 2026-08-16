@@ -1469,6 +1469,10 @@ StatusWatch is successfully deployed on EC2 with proper multi-tenant domain conf
 **Last Updated:** November 12, 2025, 22:30 CET  
 **Next Review:** Post-production monitoring (7 days)
 
+## Phase 3 Specification
+
+Here is a detailed breakdown of the features for Phase 3, focusing on refactoring to modular monolith.
+
 ### 9. Refactor to Modular Monolith
 
 **Status:** `In Progress`
@@ -1720,6 +1724,10 @@ ssh ubuntu@prod "cd /opt/statuswatch/django-statuswatch/frontend && npm run buil
 - Validation sequence: run health-check + db-check scripts, confirm Celery beat/worker show `modules.monitoring` task paths, execute multi-tenant login smoke, billing upgrade, and webhook loopback.
 - Comms + rollback: announce completion (or rollback) in Slack/email; if rollback needed, set `IMAGE_TAG=edge` and rerun `dcp up -d`, then re-point frontend via the previous build artifact (`frontend-dist-backup/`). Document outcomes + timestamps back in this sheet/ADR 11.
 
+## Phase 4 Specification
+
+Here is a detailed breakdown of the features for Phase 4, focusing on expanding functinality and robustness
+
 ### 10. Comprehensive End-to-End (E2E) Testing
 
 - **Action:** Implement an automated E2E suite using **Playwright**. Phase 1 ships a registration-only POC to validate the tooling and CI plumbing; later phases expand to the full auth/tenancy/billing critical path.
@@ -1771,3 +1779,44 @@ ssh ubuntu@prod "cd /opt/statuswatch/django-statuswatch/frontend && npm run buil
 - `frontend/playwright.config.ts` boots Playwright with Chromium/Firefox/WebKit, `trace: on-first-retry`, and a global setup hook (`frontend/e2e/global-setup.ts`) that runs the management command automatically unless `PLAYWRIGHT_SKIP_RESET=1`.
 - The registration POC lives at `frontend/e2e/specs/auth.spec.ts` and uses the `AuthPage` page object (`frontend/e2e/pages/auth-page.ts`) plus `buildRegistrationInput()` helper (`frontend/e2e/support/registration-data.ts`) to keep selectors/data DRY.
 - As more flows come online, reuse the same harness to add specs for smart login, monitors CRUD, and billing. At that stage reintroduce the Stripe-handling guidance (redirect check + mocked webhook) and storageState optimization noted above.
+
+### 11. Advanced User Registration & Email Verification
+
+- **Action:** Upgrade the registration flow to enforce mandatory email verification, prevent unverified logins, and handle edge cases like expired tokens or reserved subdomains.
+- **Test Plan:**
+  - **E2E (Playwright):** Implement `frontend/e2e/specs/registration-advanced.spec.ts` following the `@happy` path (Register → Mock Email → Click Link → Auto-Login) and `@negative` cases (Login blocked unverified).
+  - **Backend:** Unit test `verify_email` logic (expired tokens, double verification) and ensure `TokenObtainPairView` raises `403` for unverified users.
+
+#### **Frontend Tasks (React)**
+
+- **New Route:** Create `/verify-email` route and `VerifyEmailPage.tsx`.
+  - Accepting a `?token=...` query parameter.
+  - Calls `POST /api/auth/verify-email/` on mount.
+  - Displays loading, success (with "Continue to Dashboard" button), or error states (with "Resend Link" button).
+- **Registration Update:**
+  - Modify `RegisterPage` to transition to a "Check your inbox" success state instead of redirecting immediately to login.
+  - Ensure the success state persists even if the user refreshes (using `react-router` state or a URL query param).
+- **Login Guard:**
+  - Update `LoginPage` to handle specific `403/401` errors regarding verification.
+  - Display a specific alert: "Email not verified. [Resend Verification Email]" if the backend rejects the login due to verification status.
+
+#### **Backend Tasks (Django)**
+
+- **Login Enforcement:**
+  - Modify `TokenObtainPairWithLoggingView` (or the `SmartLoginView`) to check `user.profile.email_verified` before issuing tokens.
+  - Raise a specific `AuthenticationFailed` or `PermissionDenied` exception if false.
+- **Email Dispatch:**
+  - Ensure `RegistrationView` (or `TenantProvisioner`) triggers the `send_verification_email` task (via Celery) immediately after user creation.
+- **Validation Hardening:**
+  - Enhance `RegistrationSerializer` to validate against a `RESERVED_SUBDOMAINS` list (e.g., `www`, `api`, `admin`, `public`) to satisfy the `@validation` scenarios.
+  - Ensure `PasswordValidator` enforces the complexity rules defined in the Gherkin (if not already strictly active).
+
+#### **Implementation Notes**
+
+- **Architecture:** The backend endpoints (`verify_email`, `resend_verification_email`) already exist in `api/views.py` but need to be strictly wired into the auth flow. The `UserProfile` model already supports tokens; ensure `is_verification_token_expired()` logic is respected.
+- **Testing:**
+  - For E2E testing, use the `DEBUG` mode email backend or a helper endpoint to retrieve the verification link programmatically, avoiding the need for a real mail server in CI.
+  - Use `backend/modules/tenancy/provisioning.py` to centralize the "Reserved Subdomain" logic so it protects both API and potentially future admin forms.
+- **Security:**
+  - Rate limiting (already in `api/throttles.py`) must be verified active on the `resend_verification_email` endpoint to prevent email spam vectors.
+  - Verification tokens should be single-use (invalidated or rotated upon successful usage).

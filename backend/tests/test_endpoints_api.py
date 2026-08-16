@@ -2,11 +2,14 @@ import logging
 from pathlib import Path
 
 import pytest
+from api.models import UserProfile
 from django.contrib.auth import get_user_model
+from django.urls import reverse
+from django.utils import timezone
 from django_tenants.utils import schema_context
 from monitors.models import Endpoint
+from rest_framework import status
 from rest_framework.test import APIClient
-from rest_framework_simplejwt.tokens import RefreshToken
 from tenants.models import Client
 
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
@@ -45,20 +48,43 @@ def auth_client_factory():
 
     def _create(tenant: Client, email: str | None = None):
         user_email = email or f"owner@{tenant.schema_name}.example.com"
+        password = "StrongPass123!"
         with schema_context(tenant.schema_name):
             user = user_model.objects.create_user(
                 username=user_email,
                 email=user_email,
-                password="StrongPass123!",
+                password=password,
             )
-            refresh = RefreshToken.for_user(user)
-            access_token = str(refresh.access_token)
+            UserProfile.objects.update_or_create(
+                user=user,
+                defaults={
+                    "email_verified": True,
+                    "email_verification_sent_at": timezone.now(),
+                },
+            )
 
         client = APIClient()
         client.defaults["HTTP_HOST"] = f"{tenant.schema_name}.localhost"
+
+        token_response = client.post(
+            reverse("token_obtain_pair"),
+            {"username": user_email, "password": password},
+            format="json",
+        )
+        if token_response.status_code != status.HTTP_200_OK:
+            _log_response("Token obtain failed", token_response)
+            raise AssertionError(
+                f"Unable to obtain token for {user_email}: {token_response.status_code}"
+            )
+
+        access_token = token_response.json()["access"]
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
 
-        LOGGER.info("Issued access token for tenant=%s user=%s", tenant.schema_name, user_email)
+        LOGGER.info(
+            "Issued access token via login for tenant=%s user=%s",
+            tenant.schema_name,
+            user_email,
+        )
 
         return client, user
 

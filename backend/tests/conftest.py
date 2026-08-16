@@ -6,16 +6,132 @@ in the test suite, ensuring proper handling of multi-tenant database operations.
 """
 
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
 
+import psycopg
 import pytest
+from psycopg import sql
+
+try:  # pragma: no cover - dependency availability check
+    import pytest_mock  # type: ignore  # noqa: F401
+except ImportError:  # pragma: no cover - fallback path
+    pytest_mock = None
+else:  # pragma: no cover - keep lint happy when plugin exists
+    pytest_mock = True
+
+if not pytest_mock:
+    from unittest import mock
+
+    @pytest.fixture
+    def mocker():
+        """Lightweight fallback when pytest-mock plugin is unavailable."""
+
+        class _PatchProxy:
+            def __init__(self) -> None:
+                self._patchers: list[mock._patch] = []  # type: ignore[attr-defined]
+
+            def _start(self, patcher):
+                started = patcher.start()
+                self._patchers.append(patcher)
+                return started
+
+            def __call__(self, target, *args, **kwargs):
+                return self._start(mock.patch(target, *args, **kwargs))
+
+            def object(self, target, attribute, *args, **kwargs):
+                return self._start(mock.patch.object(target, attribute, *args, **kwargs))
+
+            def stopall(self):
+                while self._patchers:
+                    self._patchers.pop().stop()
+
+        proxy = _PatchProxy()
+
+        class _Mocker:
+            patch = proxy
+
+            @staticmethod
+            def Mock(*args, **kwargs):
+                return mock.Mock(*args, **kwargs)
+
+        try:
+            yield _Mocker()
+        finally:
+            proxy.stopall()
+
+
+_worker_db_bootstrapped = False
+
+
+def _normalize_worker_db_name(base_name: str, worker_id: str) -> str:
+    """Return a stable worker DB name without recursive _gw suffixes."""
+
+    # Drop any existing _gwX suffix to avoid dj01_gw0_gw0, etc.
+    trimmed = re.sub(r"_gw\d+$", "", base_name)
+    return f"{trimmed}_{worker_id}"
+
+
+def _create_database_if_missing(db_params: dict[str, str], db_name: str) -> None:
+    """Create a database if it does not exist; ignore failures to keep tests running."""
+
+    admin_params = {
+        "dbname": "postgres",
+        "user": db_params.get("USER") or None,
+        "password": db_params.get("PASSWORD") or None,
+        "host": db_params.get("HOST") or None,
+        "port": db_params.get("PORT") or None,
+    }
+    admin_params = {k: v for k, v in admin_params.items() if v not in (None, "")}
+
+    try:
+        with psycopg.connect(**admin_params) as admin_conn:  # type: ignore[arg-type]
+            admin_conn.autocommit = True
+            with admin_conn.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
+                exists = cursor.fetchone()
+                if not exists:
+                    cursor.execute(f'CREATE DATABASE "{db_name}"')
+    except Exception:
+        # Keep going even if creation fails; pytest will fall back to the base DB.
+        return
+
+
+def _configure_worker_database(settings):
+    """Point each xdist worker at its own database and ensure it exists."""
+
+    global _worker_db_bootstrapped
+
+    if _worker_db_bootstrapped:
+        return
+
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker_id or worker_id == "master":
+        return
+
+    default_db = settings.DATABASES.get("default", {})
+    base_name = default_db.get("NAME")
+    if not base_name:
+        return
+
+    worker_db_name = _normalize_worker_db_name(base_name, worker_id)
+    if base_name == worker_db_name:
+        return
+
+    _create_database_if_missing(default_db, worker_db_name)
+
+    settings.DATABASES["default"]["NAME"] = worker_db_name
+    os.environ["DJANGO_WORKER_DATABASE"] = worker_db_name
+    _worker_db_bootstrapped = True
 
 
 def pytest_configure(config):
     """Configure test environment before tests run."""
     from django.conf import settings
+
+    _configure_worker_database(settings)
 
     # Fix database connection pooling for tests
     # CONN_MAX_AGE causes connection pool exhaustion in test suites
@@ -32,13 +148,139 @@ def pytest_configure(config):
 
 
 # Delay Django imports until after pytest setup
-from django.db import connection  # noqa: E402
+from django.conf import settings as django_settings  # noqa: E402
+
+_configure_worker_database(django_settings)
+
+from django.contrib.auth import get_user_model  # noqa: E402
+from django.db import close_old_connections, connection, transaction  # noqa: E402
+from django.db.utils import OperationalError  # noqa: E402
 from django_tenants.utils import schema_context  # noqa: E402
 from tenants.models import Client, Domain  # noqa: E402
+
+
+def _ensure_tenant_auth_tables(schema_name: str) -> None:
+    """Ensure the given tenant schema has auth tables before using them.
+
+    Some fixtures create users immediately after tenant creation. If migrations
+    have not been applied for that schema yet, auth_user is missing and tests
+    error before schema_context can switch. This helper runs migrate_schemas for
+    the specific tenant when auth tables are absent.
+    """
+
+    from django.core.management import call_command
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = %s
+                  AND table_name = 'auth_user'
+            )
+            """,
+            [schema_name],
+        )
+        has_auth = cursor.fetchone()[0]
+
+    if not has_auth:
+        call_command("migrate_schemas", schema_name=schema_name, verbosity=0)
+
 
 # Store the original BOUND method from connection.ops (not the class method)
 # This ensures we have access to 'self' when calling the original method
 _original_execute_sql_flush = connection.ops.execute_sql_flush
+_worker_schema_bootstrapped = False
+
+
+def _ensure_connection_ready() -> None:
+    """Ensure Django's connection handle is usable before issuing queries."""
+
+    conn = connection
+
+    # pytest-django wraps TestCase-based tests in an atomic transaction.  Closing
+    # the connection while django.db thinks it still owns an open transaction
+    # puts psycopg into a BAD state that surfaces as "connection is closed".
+    if conn.in_atomic_block:
+        status = None
+        if conn.connection is not None:
+            status = getattr(getattr(conn.connection, "pgconn", None), "status", None)
+
+        # If the current transaction has been marked for rollback, clear the flag
+        # so future queries can run without tripping TransactionManagementError.
+        if conn.needs_rollback:
+            transaction.set_rollback(False)
+
+        # psycopg status: 0 == OK. Anything else means we need to roll back the
+        # underlying transaction instead of closing the handle.
+        if status not in (None, 0):
+            try:
+                conn._rollback()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            else:
+                transaction.set_rollback(False)
+
+        # If psycopg dropped the socket entirely, re-open it without closing the
+        # Django wrapper (which would violate the atomic contract).
+        if conn.connection is None or getattr(conn.connection, "closed", False):
+            if conn.connection is not None and getattr(conn.connection, "closed", False):
+                # Drop the unusable psycopg handle so Django will recreate it.
+                try:
+                    conn.close_if_unusable_or_obsolete()
+                except Exception:
+                    conn.connection = None  # pragma: no cover - last-resort guard
+        conn.ensure_connection()
+
+        return
+
+    close_old_connections()
+    try:
+        conn.ensure_connection()
+    except OperationalError:
+        # Under heavy tenant setup the psycopg handle can get stuck in BAD state.
+        conn.close()
+
+
+def _bootstrap_worker_database_schema() -> None:
+    """Run public + tenant migrations and seed test_tenant for worker DBs."""
+
+    global _worker_schema_bootstrapped
+
+    if _worker_schema_bootstrapped:
+        return
+
+    from django.core.management import call_command
+
+    connection.set_schema_to_public()
+    call_command("migrate_schemas", schema_name="public", verbosity=0)
+
+    tenant, _ = Client.objects.get_or_create(
+        schema_name="test_tenant",
+        defaults={
+            "name": "Test Tenant",
+            "paid_until": "2099-12-31",
+            "on_trial": False,
+        },
+    )
+
+    Domain.objects.get_or_create(
+        tenant=tenant,
+        domain="test.localhost",
+        defaults={"is_primary": True},
+    )
+    Domain.objects.get_or_create(
+        tenant=tenant,
+        domain="testserver",
+        defaults={"is_primary": False},
+    )
+
+    call_command("migrate_schemas", schema_name=tenant.schema_name, verbosity=0)
+    _ensure_tenant_auth_tables(tenant.schema_name)
+    connection.set_schema_to_public()
+
+    _worker_schema_bootstrapped = True
 
 
 def _execute_sql_flush_with_cascade(sql_list, *args, **kwargs):
@@ -56,17 +298,55 @@ def _execute_sql_flush_with_cascade(sql_list, *args, **kwargs):
     connection.set_schema_to_public()
 
     cascaded_sql_list = []
-    for sql in sql_list:
-        stripped_sql = sql.strip()
+    for statement in sql_list:
+        stripped_sql = statement.strip()
         if stripped_sql.upper().startswith("TRUNCATE"):
             # Avoid appending CASCADE twice if already present.
             if "CASCADE" not in stripped_sql.upper():
                 stripped_sql = re.sub(r";\s*$", " CASCADE;", stripped_sql)
             cascaded_sql_list.append(stripped_sql)
         else:
-            cascaded_sql_list.append(sql)
+            cascaded_sql_list.append(statement)
 
     return _original_execute_sql_flush(cascaded_sql_list, *args, **kwargs)
+
+
+def _build_raw_db_params() -> dict[str, str]:
+    """Return psycopg-friendly params for the current Django connection."""
+
+    settings_dict = connection.settings_dict
+    params = {
+        "dbname": settings_dict.get("NAME"),
+        "user": settings_dict.get("USER") or None,
+        "password": settings_dict.get("PASSWORD") or None,
+        "host": settings_dict.get("HOST") or None,
+        "port": settings_dict.get("PORT") or None,
+    }
+    return {key: value for key, value in params.items() if value not in (None, "")}
+
+
+def _cleanup_tenant_tables(schema_name: str) -> None:
+    """Truncate tenant tables (tokens, auth) using a dedicated psycopg connection."""
+
+    params = _build_raw_db_params()
+    if not params:
+        return
+
+    try:
+        with psycopg.connect(**params) as raw_conn:  # type: ignore[arg-type]
+            raw_conn.autocommit = True
+            with raw_conn.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SET search_path TO {};").format(sql.Identifier(schema_name))
+                )
+                # Clean up tokens first (dependencies)
+                cursor.execute("TRUNCATE TABLE token_blacklist_blacklistedtoken CASCADE")
+                cursor.execute("TRUNCATE TABLE token_blacklist_outstandingtoken CASCADE")
+                # Clean up users (auth_user) which might persist if transaction=True
+                cursor.execute("TRUNCATE TABLE auth_user CASCADE")
+    except Exception:
+        # Fixture cleanup should never fail the test suite; swallow any driver errors.
+        pass
 
 
 # Apply the CASCADE patch globally at module level
@@ -127,6 +407,48 @@ def cleanup_all_test_schemas(django_db_setup, django_db_blocker):
 
 
 @pytest.fixture(scope="session", autouse=True)
+def bootstrap_test_tenant(
+    django_db_setup,
+    django_db_blocker,
+    cleanup_all_test_schemas,
+):
+    """Create the shared test tenant once per session outside test transactions."""
+
+    from django.core.management import call_command
+
+    with django_db_blocker.unblock():
+        _ensure_connection_ready()
+        _bootstrap_worker_database_schema()
+
+        connection.set_schema_to_public()
+
+        tenant, _ = Client.objects.get_or_create(
+            schema_name="test_tenant",
+            defaults={
+                "name": "Test Tenant",
+                "paid_until": "2099-12-31",
+                "on_trial": False,
+            },
+        )
+
+        Domain.objects.get_or_create(
+            tenant=tenant,
+            domain="test.localhost",
+            defaults={"is_primary": True},
+        )
+        Domain.objects.get_or_create(
+            tenant=tenant,
+            domain="testserver",
+            defaults={"is_primary": False},
+        )
+
+        call_command("migrate_schemas", schema_name=tenant.schema_name, verbosity=0)
+        connection.set_schema_to_public()
+
+    yield tenant.schema_name
+
+
+@pytest.fixture(scope="session", autouse=True)
 def apply_cascade_patch():
     """
     Session-scoped fixture that ensures CASCADE patch is applied for all tests.
@@ -141,28 +463,38 @@ def apply_cascade_patch():
     # Don't restore - keep patch active for entire session
 
 
-@pytest.fixture(autouse=True)
-def ensure_public_domain(db):
-    """
-    Ensure public tenant exists and testserver domain points to test_tenant.
+@pytest.fixture(scope="session", autouse=True)
+def ensure_public_domain(
+    django_db_setup,
+    django_db_blocker,
+):
+    """Ensure the public tenant exists once per session outside test transactions."""
 
-    Many tests use testserver domain. Since we now use test_tenant for all
-    user operations, testserver should point to test_tenant, not public.
-    """
-    # Ensure public tenant exists (needed for django-tenants infrastructure)
-    public_tenant = Client.objects.filter(schema_name="public").first()
-    if public_tenant is None:
-        public_tenant = Client(schema_name="public", name="Public Tenant")
-        public_tenant.auto_create_schema = False
-        public_tenant.save()
+    with django_db_blocker.unblock():
+        _ensure_connection_ready()
+        connection.set_schema_to_public()
 
-    # Don't create domains here to avoid fixture-order races. Tenant domains
-    # are created/ensured by `ensure_test_tenant` below which runs migrations
-    # and sets up tenant domains reliably.
+        public_tenant = Client.objects.filter(schema_name="public").first()
+        if public_tenant is None:
+            public_tenant = Client(schema_name="public", name="Public Tenant")
+            public_tenant.auto_create_schema = False
+            public_tenant.save()
+
+        # Ensure public.localhost domain exists so requests to it route to public schema
+        if not Domain.objects.filter(domain="public.localhost").exists():
+            Domain.objects.create(domain="public.localhost", tenant=public_tenant, is_primary=True)
+
+        connection.set_schema_to_public()
+
+    yield
 
 
-@pytest.fixture(autouse=True)
-def ensure_test_tenant(db):
+@pytest.fixture(scope="session", autouse=True)
+def ensure_test_tenant_session(
+    django_db_setup,
+    django_db_blocker,
+    bootstrap_test_tenant,
+):
     """
     Ensure a default test tenant exists for all tests.
 
@@ -176,65 +508,14 @@ def ensure_test_tenant(db):
     Tests remain in the public schema by default. Use schema_context()
     or TenantClient to switch to tenant schemas when needed.
     """
-    from django.core.management import call_command
+    with django_db_blocker.unblock():
+        _ensure_connection_ready()
+        connection.set_schema_to_public()
 
-    # Ensure we're in public schema to create tenants
-    connection.set_schema_to_public()
+        tenant = Client.objects.filter(schema_name="test_tenant").first()
+        if tenant is None:
+            raise AssertionError("Expected bootstrap_test_tenant to provision test_tenant")
 
-    # Check if tenant already exists
-    tenant = Client.objects.filter(schema_name="test_tenant").first()
-
-    if tenant is None:
-        # Create tenant - this will auto-create schema and run migrations
-        tenant = Client(
-            schema_name="test_tenant",
-            name="Test Tenant",
-            paid_until="2099-12-31",
-            on_trial=False,
-        )
-        # auto_create_schema=True is the default, which runs migrations
-        tenant.save()
-
-        # Create primary domain
-        Domain.objects.create(
-            tenant=tenant,
-            domain="test.localhost",
-            is_primary=True,
-        )
-        # Also create a 'testserver' alias domain used by many APITestCase tests.
-        Domain.objects.get_or_create(
-            tenant=tenant,
-            domain="testserver",
-            defaults={"is_primary": False},
-        )
-    else:
-        # Tenant exists - verify all required tables exist
-        with schema_context(tenant.schema_name):
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT table_name
-                    FROM information_schema.tables
-                    WHERE table_schema = %s
-                    AND table_name IN ('auth_user', 'api_userprofile', 'token_blacklist_outstandingtoken')
-                """,
-                    [tenant.schema_name],
-                )
-                existing_tables = {row[0] for row in cursor.fetchall()}
-                required_tables = {
-                    "auth_user",
-                    "api_userprofile",
-                    "token_blacklist_outstandingtoken",
-                }
-                missing_tables = required_tables - existing_tables
-
-        if missing_tables:
-            # Run migrations for this tenant schema to create missing tables
-            print(f"Running migrations for test_tenant (missing: {missing_tables})")
-            call_command("migrate_schemas", schema_name=tenant.schema_name, verbosity=0)
-
-        # Ensure both domains exist for the tenant: the primary test.localhost
-        # and an alias 'testserver' used by APITestCase client host resolution.
         Domain.objects.get_or_create(
             tenant=tenant,
             domain="test.localhost",
@@ -246,9 +527,49 @@ def ensure_test_tenant(db):
             defaults={"is_primary": False},
         )
 
-    # Stay in public schema (don't switch to tenant schema)
+        _ensure_tenant_auth_tables(tenant.schema_name)
+
+        connection.set_schema_to_public()
+        yield tenant
+
+
+@pytest.fixture(autouse=True)
+def ensure_test_tenant(db, ensure_test_tenant_session):
+    """
+    Ensure test_tenant exists for every test, recreating it if flushed.
+    """
+    _ensure_connection_ready()
     connection.set_schema_to_public()
-    return tenant
+
+    # Check if the tenant still exists (it might have been flushed by TransactionTestCase)
+    if not Client.objects.filter(schema_name="test_tenant").exists():
+        # Re-create the tenant and domains
+        tenant, _ = Client.objects.get_or_create(
+            schema_name="test_tenant",
+            defaults={
+                "name": "Test Tenant",
+                "paid_until": "2099-12-31",
+                "on_trial": False,
+            },
+        )
+        Domain.objects.get_or_create(
+            tenant=tenant,
+            domain="test.localhost",
+            defaults={"is_primary": True},
+        )
+        Domain.objects.get_or_create(
+            tenant=tenant,
+            domain="testserver",
+            defaults={"is_primary": False},
+        )
+        # We don't need to re-run migrations because schemas (DDL) are not flushed,
+        # only the rows in the public schema (Client/Domain tables) are flushed.
+
+        # Update the session object to match the new DB row
+        ensure_test_tenant_session.id = tenant.id
+        ensure_test_tenant_session.refresh_from_db()
+
+    return ensure_test_tenant_session
 
 
 @pytest.fixture(autouse=True)
@@ -262,14 +583,16 @@ def reset_schema_between_tests(db, ensure_test_tenant):
     TenantClient or schema_context() explicitly.
     """
     # Start in public schema
+    _ensure_connection_ready()
     connection.set_schema_to_public()
     yield
     # Return to public schema for next test
+    _ensure_connection_ready()
     connection.set_schema_to_public()
 
 
 @pytest.fixture(autouse=True, scope="function")
-def cleanup_jwt_tokens(db):
+def cleanup_jwt_tokens(db, ensure_test_tenant, request):
     """
     Clean up JWT token blacklist tables after each test to prevent table bloat.
 
@@ -277,51 +600,88 @@ def cleanup_jwt_tokens(db):
     of rows causing PostgreSQL table locks and test hangs. This fixture truncates
     the tables after each test to prevent resource exhaustion.
     """
+    schema_name = ensure_test_tenant.schema_name
     yield
-    # Clean up after test
-    try:
-        with schema_context("test_tenant"):
-            with connection.cursor() as cursor:
-                cursor.execute("TRUNCATE TABLE token_blacklist_blacklistedtoken CASCADE")
-                cursor.execute("TRUNCATE TABLE token_blacklist_outstandingtoken CASCADE")
-    except Exception:
-        # Ignore errors if tables don't exist yet
-        pass
-    finally:
-        connection.set_schema_to_public()
+
+    # Skip explicit truncation for standard tests (transaction=False) to avoid deadlocks.
+    # Standard tests run in a transaction that is rolled back, so cleanup is automatic.
+    # Attempting to TRUNCATE from a separate connection while the test transaction is open
+    # causes a deadlock.
+    django_db_mark = request.node.get_closest_marker("django_db")
+    if django_db_mark:
+        transaction = django_db_mark.kwargs.get("transaction", False)
+        if not transaction:
+            return
+
+    _cleanup_tenant_tables(schema_name)
+    _ensure_connection_ready()
+    connection.set_schema_to_public()
 
 
 @pytest.fixture
 def tenant_factory(db):
-    """Create disposable tenants for tests that need isolated schemas."""
+    """Create disposable tenants with migrated auth tables for isolation.
 
+    We run `migrate_schemas` the first time a tenant schema is created to ensure
+    auth tables exist before any fixtures touch `User` or `UserProfile`, which
+    prevents `relation "auth_user" does not exist` errors when a schema_context
+    is entered immediately after tenant creation.
+    """
+
+    # Cache tenants by name to avoid repeated schema creation/migrations.
+    cache: dict[str, Client] = {}
     created: list[Client] = []
+    migrated: set[str] = set()
 
     def _create(name: str | None = None) -> Client:
-        # Generate unique name to avoid violating Feature 7's unique constraint on Client.name
-        if name is None:
-            name = f"Test Tenant {uuid.uuid4().hex[:8]}"
+        from api.models import UserProfile
 
-        schema_name = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}"
-        tenant = Client(
-            schema_name=schema_name,
-            name=name,
-            paid_until="2099-12-31",
-            on_trial=False,
-        )
-        tenant.save()
+        User = get_user_model()
 
-        Domain.objects.create(
-            tenant=tenant,
-            domain=f"{schema_name}.localhost",
-            is_primary=True,
-        )
+        # Generate stable key when name is provided to enable reuse across tests.
+        cache_key = name or "__anon__"  # anonymous requests still get unique schemas
 
-        created.append(tenant)
+        if cache_key in cache and name is not None:
+            tenant = cache[cache_key]
+        else:
+            # Generate unique schema name to satisfy unique constraint on Client.name
+            if name is None:
+                name = f"Test Tenant {uuid.uuid4().hex[:8]}"
+
+            schema_name = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}"
+            tenant = Client(
+                schema_name=schema_name,
+                name=name,
+                paid_until="2099-12-31",
+                on_trial=False,
+            )
+            tenant.save()
+
+            Domain.objects.get_or_create(
+                tenant=tenant,
+                domain=f"{schema_name}.localhost",
+                defaults={"is_primary": True},
+            )
+
+            created.append(tenant)
+            if name is not None:
+                cache[cache_key] = tenant
+
+        # Ensure the tenant schema has auth tables before any user creation.
+        if tenant.schema_name not in migrated:
+            _ensure_tenant_auth_tables(tenant.schema_name)
+            migrated.add(tenant.schema_name)
+
+        # Clean per-tenant auth tables to avoid cross-test contamination when reusing tenants.
+        with schema_context(tenant.schema_name):
+            User.objects.all().delete()
+            UserProfile.objects.all().delete()
+
         return tenant
 
     yield _create
 
+    _ensure_connection_ready()
     connection.set_schema_to_public()
     for tenant in created:
         try:

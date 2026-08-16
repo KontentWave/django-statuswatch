@@ -20,37 +20,16 @@ import uuid
 
 import pytest
 from api.auth_service import MultiTenantAuthenticationError, MultiTenantAuthService
+from api.models import UserProfile
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django_tenants.utils import schema_context
 from tenants.models import Client, Domain
 
 User = get_user_model()
 
 
-@pytest.fixture
-def tenant_factory(db):
-    """
-    Factory for creating unique tenant schemas.
-    Returns a function that creates tenants with guaranteed unique schema names.
-    """
-
-    def _create_tenant(name: str, domain: str | None = None) -> Client:
-        unique_suffix = uuid.uuid4().hex[:8]
-        schema_name = f"{name.lower().replace(' ', '-')}-{unique_suffix}"
-
-        tenant = Client.objects.create(
-            schema_name=schema_name,
-            name=name,
-            paid_until="2099-12-31",
-            on_trial=False,
-        )
-
-        domain_name = domain or f"{schema_name}.localhost"
-        Domain.objects.create(domain=domain_name, tenant=tenant, is_primary=True)
-
-        return tenant
-
-    return _create_tenant
+# No local tenant_factory: rely on the shared fixture in conftest.py
 
 
 @pytest.fixture
@@ -66,6 +45,12 @@ def tenant_with_user(db, tenant_factory):
             first_name="Test",
             last_name="User",
             is_active=True,
+        )
+
+        UserProfile.objects.create(
+            user=user,
+            email_verified=True,
+            email_verification_sent_at=timezone.now(),
         )
 
     return {"tenant": tenant, "user": user, "password": "SecurePass123!"}
@@ -84,6 +69,12 @@ def tenant_with_inactive_user(db, tenant_factory):
             first_name="Inactive",
             last_name="User",
             is_active=False,  # Inactive user
+        )
+
+        UserProfile.objects.create(
+            user=user,
+            email_verified=True,
+            email_verification_sent_at=timezone.now(),
         )
 
     return {"tenant": tenant, "user": user, "password": "SecurePass123!"}
@@ -111,6 +102,12 @@ def tenant_without_primary_domain(db, tenant_factory):
             email="noprimary@company.com",
             password="SecurePass123!",
             is_active=True,
+        )
+
+        UserProfile.objects.create(
+            user=user,
+            email_verified=True,
+            email_verification_sent_at=timezone.now(),
         )
 
     return {"tenant": tenant, "user": user, "password": "SecurePass123!"}
@@ -249,6 +246,29 @@ class TestMultiTenantAuthServiceExceptions:
 
         # Should raise authentication error
         assert "No active account found" in str(exc_info.value)
+
+    def test_authenticate_user_blocks_unverified_profiles(self, tenant_with_user):
+        """Ensure unverified users cannot obtain tokens via multi-tenant login."""
+
+        tenant = tenant_with_user["tenant"]
+        user = tenant_with_user["user"]
+        password = tenant_with_user["password"]
+
+        with schema_context(tenant.schema_name):
+            UserProfile.objects.update_or_create(
+                user=user,
+                defaults={"email_verified": False},
+            )
+
+        with pytest.raises(MultiTenantAuthenticationError) as exc_info:
+            MultiTenantAuthService.authenticate_user(
+                username=user.email,
+                password=password,
+                tenant_schema=tenant.schema_name,
+            )
+
+        assert "Email not verified" in str(exc_info.value)
+        assert getattr(exc_info.value, "code", None) == "email_unverified"
 
     def test_authenticate_user_public_schema_reset_failure(self, tenant_with_user):
         """

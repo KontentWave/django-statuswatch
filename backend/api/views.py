@@ -1,9 +1,14 @@
 import json
 import logging
-from datetime import datetime
+import uuid
+from datetime import timedelta
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import OperationalError, ProgrammingError, connection, transaction
+from django.utils import timezone
+from django_tenants.utils import get_public_schema_name, schema_context
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -12,16 +17,51 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenViewBase
-from tenants.models import SubscriptionStatus
+from tenants.models import Client, SubscriptionStatus
 
 from .audit_log import AuditEvent, log_audit_event
 from .logging_utils import sanitize_log_value
 from .models import UserProfile
 from .serializers import RegistrationSerializer, UserSerializer
 from .throttles import BurstRateThrottle, LoginRateThrottle, RegistrationRateThrottle
+from .utils import send_verification_email
 
 auth_logger = logging.getLogger("api.auth")
 User = get_user_model()
+
+
+def _ordered_schema_names(current_schema: str | None = None) -> list[str]:
+    """
+    Return tenant schemas to search, excluding the public schema.
+
+    Email/user data lives in tenant schemas only; querying public first would
+    throw relation errors (no user_profiles table) and close the connection.
+    We therefore skip public entirely and deduplicate while preserving order.
+    """
+
+    public_schema = get_public_schema_name()
+
+    schema_candidates: list[str] = []
+    if current_schema and current_schema != public_schema:
+        schema_candidates.append(current_schema)
+
+    with schema_context(public_schema):
+        tenant_schemas = list(
+            Client.objects.exclude(schema_name=public_schema).values_list("schema_name", flat=True)
+        )
+        schema_candidates.extend(tenant_schemas)
+
+    if settings.DEBUG and "test_tenant" not in schema_candidates:
+        schema_candidates.append("test_tenant")
+
+    ordered_schemas: list[str] = []
+    seen: set[str] = set()
+    for schema_name in schema_candidates:
+        if schema_name and schema_name not in seen:
+            ordered_schemas.append(schema_name)
+            seen.add(schema_name)
+
+    return ordered_schemas
 
 
 def _write_debug_log(log_type: str, data: dict) -> None:
@@ -32,10 +72,10 @@ def _write_debug_log(log_type: str, data: dict) -> None:
 
         log_file = log_dir / "auth_debug.log"
 
-        entry = {"timestamp": datetime.utcnow().isoformat(), "type": log_type, "data": data}
+        entry = {"timestamp": timezone.now().isoformat(), "type": log_type, "data": data}
 
         with open(log_file, "a") as f:
-            f.write(json.dumps(entry) + "\n")
+            f.write(json.dumps(entry, default=str) + "\n")
     except Exception as e:
         # Don't let logging failures break authentication
         auth_logger.error(f"Failed to write debug log: {e}")
@@ -164,10 +204,8 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
             "tenant_name": getattr(tenant, "name", None),
         }
 
-        # Check if user exists in this schema
+        # Check if user exists in this schema for richer logging context
         try:
-            from django_tenants.utils import schema_context
-
             with schema_context(schema_name):
                 try:
                     user = User.objects.get(email=username)
@@ -179,27 +217,21 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
                         user.password[:20] if user.password else None
                     )
 
-                    # TEST PASSWORD VERIFICATION
                     password_check = user.check_password(password)
                     debug_data["password_check_result"] = password_check
                 except User.DoesNotExist:
                     debug_data["user_exists"] = False
                     debug_data["error"] = f"User {username} not found in schema {schema_name}"
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive debug fallback
             debug_data["user_lookup_error"] = str(e)
 
-        _write_debug_log("login_attempt", debug_data)
-
-        # Enhanced logging: track tenant routing
-        auth_logger.info(
-            "Login attempt received",
-            extra={
-                "username": username,
-                "schema_name": schema_name,
-                "host": host,
+        _write_debug_log(
+            "login_attempt",
+            {
+                **debug_data,
                 "origin": origin,
                 "ip_address": ip_address,
-                "user_agent": user_agent[:100] if user_agent else "",  # Truncate long UA
+                "user_agent": user_agent[:100] if user_agent else "",
                 "is_public_schema": schema_name == "public",
             },
         )
@@ -247,6 +279,123 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
             raise InvalidToken(reason) from exc
 
         user = getattr(serializer, "user", None)
+        if user is None and username:
+            lookup_filters = (
+                {"email__iexact": username},
+                {"username__iexact": username},
+            )
+            with schema_context(schema_name):
+                for filters in lookup_filters:
+                    try:
+                        user = User.objects.get(**filters)
+                        break
+                    except User.DoesNotExist:
+                        continue
+
+        profile = None
+        profile_created = False
+        profile_is_verified = True
+        if user is not None:
+            with schema_context(schema_name):
+                # select_for_update requires an explicit transaction; wrap the profile
+                # fetch/create logic to avoid TransactionManagementError during login.
+                with transaction.atomic():
+                    profile = (
+                        UserProfile.objects.select_for_update()
+                        .filter(user=user)
+                        .select_related("user")
+                        .first()
+                    )
+
+                    if profile is None:
+                        profile = UserProfile.objects.create(
+                            user=user,
+                            email_verified=False,
+                            email_verification_sent_at=timezone.now(),
+                        )
+                        profile_created = True
+
+                    # Always ensure we have the latest values from DB before decision making
+                    profile.refresh_from_db(fields=["email_verified", "email_verification_sent_at"])
+                    profile_is_verified = profile.email_verified
+
+                    if not profile_is_verified and profile.email_verification_sent_at is None:
+                        profile.email_verification_sent_at = timezone.now()
+                        profile.save(update_fields=["email_verification_sent_at", "updated_at"])
+
+            if profile_created:
+                send_verification_email(user, profile.email_verification_token)
+
+        if profile and not profile_is_verified:
+            _write_debug_log(
+                "login_profile_state",
+                {
+                    "email": username or getattr(user, "email", None),
+                    "user_id": getattr(user, "id", None),
+                    "schema_name": schema_name,
+                    "email_verified": profile_is_verified,
+                    "profile_updated_at": getattr(profile, "updated_at", None),
+                },
+            )
+            message = (
+                "Email not verified. Please verify your address via the link in your inbox"
+                " or request a new verification email."
+            )
+
+            _write_debug_log(
+                "login_blocked_unverified",
+                {
+                    "email": username or getattr(user, "email", None),
+                    "user_id": getattr(user, "id", None),
+                    "schema_name": schema_name,
+                },
+            )
+
+            auth_logger.warning(
+                "Login blocked until email verification",
+                extra={
+                    "email": username or getattr(user, "email", None),
+                    "user_id": getattr(user, "id", None),
+                    "schema_name": schema_name,
+                    "host": host,
+                    "ip_address": ip_address,
+                },
+            )
+
+            log_audit_event(
+                event=AuditEvent.USER_LOGIN_FAILED,
+                user_id=getattr(user, "id", None),
+                user_email=username or getattr(user, "email", None),
+                ip_address=ip_address,
+                tenant_schema=schema_name,
+                details={
+                    "reason": "email_unverified",
+                    "user_agent": user_agent,
+                    "host": host,
+                },
+            )
+
+            return Response(
+                {
+                    "error": {
+                        "code": "email_unverified",
+                        "message": message,
+                    }
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        elif profile:
+            _write_debug_log(
+                "login_profile_state",
+                {
+                    "email": username or getattr(user, "email", None),
+                    "user_id": getattr(user, "id", None),
+                    "schema_name": schema_name,
+                    "email_verified": profile_is_verified,
+                    "profile_updated_at": getattr(profile, "updated_at", None),
+                    "blocked": False,
+                },
+            )
 
         # Log successful authentication
         _write_debug_log(
@@ -292,87 +441,211 @@ class TokenObtainPairWithLoggingView(TokenViewBase):
         return request.META.get("REMOTE_ADDR", "unknown")
 
 
-@api_view(["GET", "POST"])
-def verify_email(request, token):
-    """
-    Verify user's email address using the token sent via email.
+@api_view(["POST"])
+def verify_email(request):
+    """Verify a user's email using a JSON payload that includes the token."""
 
-    This endpoint is public (no authentication required) and uses the
-    verification token to identify and verify the user.
-    Accepts both GET (for email links) and POST (for API calls).
-
-    Args:
-        token: UUID token sent to user's email
-
-    Returns:
-        200: Email verified successfully
-        400: Invalid or expired token
-        404: Token not found
-    """
-    try:
-        profile = UserProfile.objects.select_related("user").get(email_verification_token=token)
-    except UserProfile.DoesNotExist:
-        return Response({"error": "Invalid verification token."}, status=status.HTTP_404_NOT_FOUND)
-
-    # Check if already verified
-    if profile.email_verified:
+    token_value = request.data.get("token")
+    if not token_value:
         return Response(
-            {"detail": "Email already verified. You can now log in."}, status=status.HTTP_200_OK
-        )
-
-    # Check if token expired
-    if profile.is_verification_token_expired():
-        return Response(
-            {"error": "Verification token has expired. Please request a new one.", "expired": True},
+            {"error": "Verification token is required."},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # Verify the email
-    profile.email_verified = True
-    profile.save()
+    try:
+        token_uuid = uuid.UUID(str(token_value))
+    except (ValueError, TypeError):
+        return Response(
+            {"error": "Invalid verification token."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    current_schema = getattr(getattr(request, "tenant", None), "schema_name", None)
+    ordered_schemas = _ordered_schema_names(current_schema)
+
+    for schema_name in ordered_schemas:
+        try:
+            with schema_context(schema_name):
+                with transaction.atomic():
+                    profile = (
+                        UserProfile.objects.select_related("user")
+                        .select_for_update()
+                        .filter(email_verification_token=token_uuid)
+                        .first()
+                    )
+
+                    if not profile:
+                        continue
+
+                    user_email = profile.user.email
+
+                    if profile.email_verified:
+                        return Response(
+                            {
+                                "detail": "Email already verified. You can now log in.",
+                                "email": user_email,
+                            },
+                            status=status.HTTP_200_OK,
+                        )
+
+                    if profile.is_verification_token_expired():
+                        return Response(
+                            {
+                                "error": "Verification token has expired. Please request a new one.",
+                                "expired": True,
+                                "email": user_email,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    profile.email_verified = True
+                    profile.email_verification_token = None
+                    profile.save(
+                        update_fields=[
+                            "email_verified",
+                            "email_verification_token",
+                            "updated_at",
+                        ]
+                    )
+
+                    from .utils import send_welcome_email
+
+                    send_welcome_email(profile.user)
+
+                    return Response(
+                        {
+                            "detail": "Email verified successfully! You can now log in.",
+                            "email": user_email,
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+        except (ProgrammingError, OperationalError):
+            if connection.in_atomic_block:
+                transaction.set_rollback(True)
+            connection.close_if_unusable_or_obsolete()
+            continue
+        except Exception:
+            if connection.in_atomic_block:
+                transaction.set_rollback(True)
+            connection.close_if_unusable_or_obsolete()
+            continue
 
     return Response(
-        {"detail": "Email verified successfully! You can now log in."}, status=status.HTTP_200_OK
+        {"error": "Invalid verification token."},
+        status=status.HTTP_404_NOT_FOUND,
     )
 
 
 @api_view(["POST"])
 def resend_verification_email(request):
-    """
-    Resend verification email to the user.
+    """Resend a verification email without leaking whether the account exists."""
 
-    User must be authenticated but not yet verified. This allows users
-    who didn't receive the email or whose token expired to get a new one.
+    email = (request.data.get("email") or "").strip().lower()
+    if not email:
+        return Response(
+            {"error": "Email address is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-    Rate limited to prevent abuse.
-
-    Returns:
-        200: Email resent successfully
-        400: Email already verified or rate limit exceeded
-    """
-    if not request.user.is_authenticated:
-        return Response({"error": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
-
-    try:
-        profile = request.user.profile
-    except UserProfile.DoesNotExist:
-        return Response({"error": "User profile not found."}, status=status.HTTP_404_NOT_FOUND)
-
-    if profile.email_verified:
-        return Response({"error": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Regenerate token and send email
-    profile.regenerate_verification_token()
-
-    # Import here to avoid circular dependency
-    from .utils import send_verification_email
-
-    send_verification_email(request.user, profile.email_verification_token)
-
-    return Response(
-        {"detail": "Verification email has been resent. Please check your inbox."},
-        status=status.HTTP_200_OK,
+    generic_detail = (
+        "If an account exists for this email, we've sent a fresh verification link. Please check"
+        " your inbox."
     )
+
+    current_schema = getattr(getattr(request, "tenant", None), "schema_name", None)
+    ordered_schemas = _ordered_schema_names(current_schema)
+
+    for schema_name in ordered_schemas:
+        try:
+            with schema_context(schema_name):
+                with transaction.atomic():
+                    user_profile = (
+                        UserProfile.objects.select_related("user")
+                        .select_for_update()
+                        .filter(user__email__iexact=email)
+                        .order_by("-updated_at")
+                        .first()
+                    )
+
+                    if not user_profile:
+                        continue
+
+                    if user_profile.email_verified:
+                        return Response(
+                            {"detail": "Email is already verified. You can now log in."},
+                            status=status.HTTP_200_OK,
+                        )
+
+                    user_profile.regenerate_verification_token()
+
+                    from .utils import send_verification_email
+
+                    send_verification_email(
+                        user_profile.user, user_profile.email_verification_token
+                    )
+
+                    return Response({"detail": generic_detail}, status=status.HTTP_200_OK)
+        except (ProgrammingError, OperationalError):
+            if connection.in_atomic_block:
+                transaction.set_rollback(True)
+            connection.close_if_unusable_or_obsolete()
+            continue
+
+    return Response({"detail": generic_detail}, status=status.HTTP_200_OK)
+
+
+@api_view(["POST"])
+def resend_verification_email_debug(request):
+    """Development-only helper that forces a verification email resend for an email."""
+
+    if not settings.DEBUG:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    email = (request.data.get("email") or "").strip().lower()
+    if not email:
+        return Response(
+            {"error": "Email address is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    current_schema = getattr(getattr(request, "tenant", None), "schema_name", None)
+    ordered_schemas = _ordered_schema_names(current_schema)
+
+    for schema_name in ordered_schemas:
+        try:
+            with schema_context(schema_name):
+                with transaction.atomic():
+                    profile = (
+                        UserProfile.objects.select_related("user")
+                        .select_for_update()
+                        .filter(user__email__iexact=email)
+                        .order_by("-updated_at")
+                        .first()
+                    )
+                    if not profile:
+                        continue
+
+                    profile.email_verified = False
+                    profile.regenerate_verification_token()
+
+                    from .utils import send_verification_email
+
+                    send_verification_email(profile.user, profile.email_verification_token)
+
+                    return Response(
+                        {
+                            "detail": "Verification email resent.",
+                            "schema": schema_name,
+                            "token": str(profile.email_verification_token),
+                        }
+                    )
+        except (ProgrammingError, OperationalError):
+            if connection.in_atomic_block:
+                transaction.set_rollback(True)
+            connection.close_if_unusable_or_obsolete()
+            continue
+
+    return Response({"error": "Email not found."}, status=status.HTTP_404_NOT_FOUND)
 
 
 class LogoutView(APIView):
@@ -524,3 +797,124 @@ def validate_domain_for_tls(request):
             {"domain": domain, "valid": False},
             status=status.HTTP_404_NOT_FOUND,
         )
+
+
+@api_view(["GET"])
+def latest_verification_token(request):
+    """Development-only helper that exposes the latest verification token for an email."""
+
+    if not settings.DEBUG:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    email = (request.GET.get("email") or "").strip().lower()
+    if not email:
+        return Response(
+            {"error": "email query parameter is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    current_schema = getattr(getattr(request, "tenant", None), "schema_name", None)
+    ordered_schemas = _ordered_schema_names(current_schema)
+
+    for schema_name in ordered_schemas:
+        try:
+            with schema_context(schema_name):
+                with transaction.atomic():
+                    profile = (
+                        UserProfile.objects.select_related("user")
+                        .filter(user__email__iexact=email)
+                        .order_by("-updated_at")
+                        .first()
+                    )
+                    if not profile or not profile.email_verification_token:
+                        continue
+                    return Response(
+                        {
+                            "email": profile.user.email,
+                            "token": str(profile.email_verification_token),
+                            "schema": schema_name,
+                        }
+                    )
+        except (ProgrammingError, OperationalError):
+            if connection.in_atomic_block:
+                transaction.set_rollback(True)
+            connection.close_if_unusable_or_obsolete()
+            continue
+
+    return Response(
+        {"error": "Verification token not found for the supplied email."},
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+@api_view(["POST"])
+def expire_verification_token(request):
+    """Development-only helper to mark a verification token as expired."""
+
+    if not settings.DEBUG:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    email = (request.data.get("email") or "").strip().lower()
+    token_value = request.data.get("token")
+
+    if not email and not token_value:
+        return Response(
+            {"error": "Either email or token is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    token_uuid: uuid.UUID | None = None
+    if token_value:
+        try:
+            token_uuid = uuid.UUID(str(token_value))
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "Invalid verification token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    current_schema = getattr(getattr(request, "tenant", None), "schema_name", None)
+    ordered_schemas = _ordered_schema_names(current_schema)
+
+    for schema_name in ordered_schemas:
+        try:
+            with schema_context(schema_name):
+                with transaction.atomic():
+                    query = UserProfile.objects.select_related("user")
+                    if email:
+                        query = query.filter(user__email__iexact=email)
+                    if token_uuid:
+                        query = query.filter(email_verification_token=token_uuid)
+
+                    profile = query.order_by("-updated_at").first()
+                    if not profile:
+                        continue
+
+                    profile.email_verification_sent_at = timezone.now() - timedelta(days=3)
+                    profile.email_verified = False
+                    profile.save(
+                        update_fields=[
+                            "email_verification_sent_at",
+                            "email_verified",
+                            "updated_at",
+                        ]
+                    )
+
+                    return Response(
+                        {
+                            "detail": "Verification token marked as expired.",
+                            "email": profile.user.email,
+                            "schema": schema_name,
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+        except (ProgrammingError, OperationalError):
+            if connection.in_atomic_block:
+                transaction.set_rollback(True)
+            connection.close_if_unusable_or_obsolete()
+            continue
+
+    return Response(
+        {"error": "Matching verification token not found."},
+        status=status.HTTP_404_NOT_FOUND,
+    )

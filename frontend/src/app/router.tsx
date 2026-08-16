@@ -12,7 +12,13 @@ import DashboardPage from "@/pages/Dashboard";
 import BillingPage from "@/pages/Billing";
 import BillingSuccessPage from "@/pages/BillingSuccess";
 import BillingCancelPage from "@/pages/BillingCancel";
+import VerifyEmailPage from "@/pages/VerifyEmail";
 import { getAccessToken } from "@/lib/auth";
+import {
+  DEFAULT_REDIRECT,
+  allowedRedirectPaths,
+  sanitizeRedirectPath,
+} from "@/lib/redirects";
 
 /**
  * Check if current domain is the public domain (not a tenant subdomain)
@@ -50,8 +56,15 @@ function guardPublicDomain(pathname: string) {
     return; // Allow all routes on tenant subdomains
   }
 
-  const allowedPaths = ["/", "/login", "/register"];
-  if (!allowedPaths.includes(pathname)) {
+  const allowedPaths = new Set<string>([
+    "/",
+    "/login",
+    "/register",
+    "/verify-email",
+    ...allowedRedirectPaths,
+  ]);
+
+  if (!allowedPaths.has(pathname)) {
     throw redirect({
       to: "/",
       replace: true,
@@ -75,6 +88,11 @@ const loginRoute = createRoute({
   path: "/login",
   component: LoginPage,
 });
+const verifyEmailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/verify-email",
+  component: VerifyEmailPage,
+});
 const authenticatedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "authenticated",
@@ -87,6 +105,9 @@ const authenticatedRoute = createRoute({
       return;
     }
 
+    const destination =
+      sanitizeRedirectPath(location.pathname) ?? DEFAULT_REDIRECT;
+
     throw redirect({
       to: "/login",
       replace: true,
@@ -94,7 +115,7 @@ const authenticatedRoute = createRoute({
         ({
           ...(typeof prev === "object" && prev !== null ? prev : {}),
           message: "Please sign in to continue.",
-          redirectTo: (location.pathname ?? "/dashboard") as "/dashboard",
+          redirectTo: destination,
         } as Record<string, unknown>),
     });
   },
@@ -137,6 +158,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   registerRoute,
   loginRoute,
+  verifyEmailRoute,
   authenticatedRoute.addChildren([
     dashboardRoute,
     billingRoute,

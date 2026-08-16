@@ -29,7 +29,11 @@ class UserProfile(models.Model):
     )
 
     email_verification_token = models.UUIDField(
-        default=uuid.uuid4, editable=False, help_text="Token sent to user's email for verification"
+        default=uuid.uuid4,
+        editable=False,
+        null=True,
+        blank=True,
+        help_text="Token sent to user's email for verification",
     )
 
     email_verification_sent_at: models.DateTimeField | None = models.DateTimeField(

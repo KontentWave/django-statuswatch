@@ -75,3 +75,19 @@ def test_register_validation_errors_return_400(client, payload, expected_error_f
     assert response.status_code == 400
     errors = response.json().get("errors", {})
     assert expected_error_field in errors
+
+
+def test_register_rejects_reserved_subdomain_names(client):
+    payload = {
+        "organization_name": "www",
+        "email": "founder@example.com",
+        "password": "JarvisIsMyP@ssw0rd",
+        "password_confirm": "JarvisIsMyP@ssw0rd",
+    }
+
+    response = _post_json(client, "/api/auth/register/", payload)
+
+    assert response.status_code == 400
+    errors = response.json().get("errors", {})
+    org_errors = " ".join(errors.get("organization_name", []))
+    assert "reserved" in org_errors.lower()
