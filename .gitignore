@@ -36,6 +36,8 @@ frontend/logs
 frontend/playwright-report/
 frontend/test-results/
 frontend/blob-report/
+frontend/playwright-debug/
+frontend/playwright-debug-advanced/
 *.tsbuildinfo
 
 # Vite env files (keep secrets out of git)
