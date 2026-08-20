@@ -10,6 +10,16 @@ import stripe
 from tenants.models import Client, SubscriptionStatus
 
 
+def _resource_value(resource: Any, field_name: str) -> Any:
+    """Read fields from Stripe resource objects or plain dict test doubles."""
+
+    if resource is None:
+        return None
+    if isinstance(resource, dict):
+        return resource.get(field_name)
+    return getattr(resource, field_name, None)
+
+
 @dataclass(slots=True, frozen=True)
 class BillingCheckoutSessionResult:
     """Outcome of the subscription checkout service call."""
@@ -56,6 +66,18 @@ class BillingWebhookResult:
     previous_status: SubscriptionStatus | None
     new_status: SubscriptionStatus | None
     customer_id: str | None
+
+
+@dataclass(slots=True, frozen=True)
+class BillingSubscriptionSyncResult:
+    """Outcome of reconciling a tenant's Stripe subscription state."""
+
+    previous_status: SubscriptionStatus
+    new_status: SubscriptionStatus
+    customer_id: str | None
+    subscription_id: str | None
+    remote_status: str | None
+    synced: bool
 
 
 def create_subscription_checkout_session(
@@ -185,7 +207,7 @@ def cancel_active_subscription(
     subscription_to_cancel = None
     if subscription_list and getattr(subscription_list, "data", None):
         for item in subscription_list.data:
-            status_value = (item or {}).get("status")
+            status_value = _resource_value(item, "status")
             if status_value in cancelable:
                 subscription_to_cancel = item
                 break
@@ -195,8 +217,8 @@ def cancel_active_subscription(
     remote_status = None
 
     if subscription_to_cancel is not None:
-        subscription_id = subscription_to_cancel.get("id")
-        remote_status = subscription_to_cancel.get("status")
+        subscription_id = _resource_value(subscription_to_cancel, "id")
+        remote_status = _resource_value(subscription_to_cancel, "status")
         if subscription_id:
             stripe_client.Subscription.delete(subscription_id)
             remote_cancelled = True
@@ -214,6 +236,59 @@ def cancel_active_subscription(
         remote_status=remote_status,
         remote_cancelled=remote_cancelled,
         customer_id=tenant_customer_id or None,
+    )
+
+
+def reconcile_tenant_subscription_status(
+    *,
+    stripe_secret_key: str,
+    tenant: Client,
+    stripe_api: Any | None = None,
+) -> BillingSubscriptionSyncResult:
+    """Refresh tenant subscription state from Stripe's current subscription list."""
+
+    previous_status = tenant.subscription_status
+    customer_id = getattr(tenant, "stripe_customer_id", "") or ""
+    if not stripe_secret_key or not customer_id:
+        return BillingSubscriptionSyncResult(
+            previous_status=previous_status,
+            new_status=previous_status,
+            customer_id=customer_id or None,
+            subscription_id=None,
+            remote_status=None,
+            synced=False,
+        )
+
+    stripe_client = stripe_api or stripe
+    stripe_client.api_key = stripe_secret_key
+
+    subscription_list = stripe_client.Subscription.list(
+        customer=customer_id,
+        status="all",
+        limit=10,
+    )
+
+    active_statuses = {"trialing", "active", "past_due", "unpaid"}
+    remote_subscription = None
+    if subscription_list and getattr(subscription_list, "data", None):
+        for item in subscription_list.data:
+            status_value = _resource_value(item, "status")
+            if status_value in active_statuses:
+                remote_subscription = item
+                break
+
+    new_status = SubscriptionStatus.PRO if remote_subscription else SubscriptionStatus.FREE
+    if previous_status != new_status:
+        tenant.subscription_status = new_status
+        tenant.save(update_fields=["subscription_status"])
+
+    return BillingSubscriptionSyncResult(
+        previous_status=previous_status,
+        new_status=new_status,
+        customer_id=customer_id,
+        subscription_id=_resource_value(remote_subscription, "id"),
+        remote_status=_resource_value(remote_subscription, "status"),
+        synced=True,
     )
 
 
@@ -334,9 +409,11 @@ __all__ = [
     "BillingCancellationResult",
     "BillingCheckoutSessionResult",
     "BillingPortalSessionResult",
+    "BillingSubscriptionSyncResult",
     "BillingWebhookResult",
     "cancel_active_subscription",
     "create_billing_portal_session",
     "create_subscription_checkout_session",
     "dispatch_billing_webhook_event",
+    "reconcile_tenant_subscription_status",
 ]

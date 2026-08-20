@@ -7,6 +7,8 @@ including groups, and that unauthenticated requests are rejected.
 
 import time
 from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -215,3 +217,40 @@ def test_me_endpoint_staff_user(stark_industries_tenant):
     assert data["username"] == "jarvis@starkindustries.com"
     assert data["is_staff"] is True
     assert data["plan"] == "free"
+
+
+@override_settings(ALLOWED_HOSTS=["*"], STRIPE_SECRET_KEY="sk_test_123")
+@pytest.mark.django_db(transaction=True)
+@patch("api.views.reconcile_tenant_subscription_status")
+def test_me_endpoint_reconciles_stripe_subscription_plan(
+    mock_reconcile_subscription_status,
+    stark_industries_tenant,
+):
+    """Test that /api/auth/me/ surfaces a reconciled Pro plan from Stripe state."""
+    with schema_context(stark_industries_tenant.schema_name):
+        user = User.objects.create_user(
+            username="bruce@starkindustries.com",
+            email="bruce@starkindustries.com",
+            password="HulkSmash123!",
+        )
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+
+    stark_industries_tenant.subscription_status = "free"
+    stark_industries_tenant.stripe_customer_id = "cus_live_like"
+    stark_industries_tenant.save(update_fields=["subscription_status", "stripe_customer_id"])
+
+    mock_reconcile_subscription_status.return_value = SimpleNamespace(new_status="pro")
+
+    client = APIClient()
+    client.defaults["HTTP_HOST"] = f"{stark_industries_tenant.schema_name}.localhost"
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+
+    response = client.get("/api/auth/me/")
+
+    assert response.status_code == 200
+    assert response.json()["plan"] == "pro"
+    mock_reconcile_subscription_status.assert_called_once_with(
+        stripe_secret_key="sk_test_123",
+        tenant=stark_industries_tenant,
+    )

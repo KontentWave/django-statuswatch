@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from django.db import OperationalError, ProgrammingError, connection, transaction
 from django.utils import timezone
 from django_tenants.utils import get_public_schema_name, schema_context
+from modules.billing import reconcile_tenant_subscription_status
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -107,6 +108,25 @@ class CurrentUserView(APIView):
 
     def get(self, request):
         tenant = getattr(request, "tenant", None)
+        plan = getattr(tenant, "subscription_status", SubscriptionStatus.FREE)
+        if tenant is not None:
+            try:
+                sync_result = reconcile_tenant_subscription_status(
+                    stripe_secret_key=getattr(settings, "STRIPE_SECRET_KEY", ""),
+                    tenant=tenant,
+                )
+                plan = sync_result.new_status
+            except Exception as exc:  # noqa: BLE001
+                auth_logger.warning(
+                    "Stripe subscription reconciliation failed during current user fetch",
+                    extra={
+                        "user_id": getattr(request.user, "id", None),
+                        "schema_name": getattr(tenant, "schema_name", "public"),
+                        "stripe_customer_id": getattr(tenant, "stripe_customer_id", None),
+                        "error": sanitize_log_value(str(exc)),
+                    },
+                )
+
         auth_logger.info(
             "Fetched current user profile",
             extra={
@@ -118,7 +138,6 @@ class CurrentUserView(APIView):
         )
         serializer = UserSerializer(request.user)
         data = dict(serializer.data)
-        plan = getattr(tenant, "subscription_status", SubscriptionStatus.FREE)
         data["plan"] = plan
         return Response(data)
 

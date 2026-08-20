@@ -10,11 +10,13 @@ from .services import (
     BillingCancellationResult,
     BillingCheckoutSessionResult,
     BillingPortalSessionResult,
+    BillingSubscriptionSyncResult,
     BillingWebhookResult,
     cancel_active_subscription,
     create_billing_portal_session,
     create_subscription_checkout_session,
     dispatch_billing_webhook_event,
+    reconcile_tenant_subscription_status,
 )
 
 __all__ = [
@@ -25,9 +27,11 @@ __all__ = [
     "BillingCancellationResult",
     "BillingCheckoutSessionResult",
     "BillingPortalSessionResult",
+    "BillingSubscriptionSyncResult",
     "BillingWebhookResult",
     "cancel_active_subscription",
     "create_billing_portal_session",
     "create_subscription_checkout_session",
     "dispatch_billing_webhook_event",
+    "reconcile_tenant_subscription_status",
 ]

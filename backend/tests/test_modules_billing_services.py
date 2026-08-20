@@ -11,6 +11,7 @@ from modules.billing.services import (
     create_billing_portal_session,
     create_subscription_checkout_session,
     dispatch_billing_webhook_event,
+    reconcile_tenant_subscription_status,
 )
 from tenants.models import SubscriptionStatus
 
@@ -82,6 +83,12 @@ class StripeStub:
         return SimpleNamespace(id=subscription_id, status="canceled")
 
 
+class StripeResourceStub:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
 @pytest.mark.django_db
 def test_create_subscription_checkout_session_creates_customer_and_session():
     tenant = TenantStub(schema_name="acme")
@@ -144,6 +151,74 @@ def test_cancel_active_subscription_updates_status_and_deletes_remote():
     assert result.remote_cancelled is True
     assert tenant.subscription_status == SubscriptionStatus.FREE
     assert stripe_stub.subscription_delete_calls == ["sub_123"]
+
+
+@pytest.mark.django_db
+def test_cancel_active_subscription_handles_object_resources():
+    tenant = TenantStub(schema_name="acme", stripe_customer_id="cus_active")
+    tenant.subscription_status = SubscriptionStatus.PRO
+    stripe_stub = StripeStub()
+    stripe_stub._subscription_list_response = SimpleNamespace(
+        data=[StripeResourceStub(id="sub_obj", status="active")]
+    )
+
+    result = cancel_active_subscription(
+        stripe_secret_key="sk_test",
+        tenant=tenant,
+        cancelable_statuses={"active"},
+        stripe_api=stripe_stub,
+    )
+
+    assert result.subscription_id == "sub_obj"
+    assert result.remote_status == "active"
+    assert result.remote_cancelled is True
+    assert stripe_stub.subscription_delete_calls == ["sub_obj"]
+
+
+@pytest.mark.django_db
+def test_reconcile_tenant_subscription_status_promotes_active_customer():
+    tenant = TenantStub(schema_name="acme", stripe_customer_id="cus_active")
+    stripe_stub = StripeStub()
+    stripe_stub._subscription_list_response = SimpleNamespace(
+        data=[{"id": "sub_live", "status": "active"}]
+    )
+
+    result = reconcile_tenant_subscription_status(
+        stripe_secret_key="sk_test",
+        tenant=tenant,
+        stripe_api=stripe_stub,
+    )
+
+    assert result.previous_status == SubscriptionStatus.FREE
+    assert result.new_status == SubscriptionStatus.PRO
+    assert result.subscription_id == "sub_live"
+    assert result.remote_status == "active"
+    assert result.synced is True
+    assert tenant.subscription_status == SubscriptionStatus.PRO
+    assert tenant.saved_fields == [["subscription_status"]]
+    assert stripe_stub.subscription_list_calls == [
+        {"customer": "cus_active", "status": "all", "limit": 10}
+    ]
+
+
+@pytest.mark.django_db
+def test_reconcile_tenant_subscription_status_handles_object_resources():
+    tenant = TenantStub(schema_name="acme", stripe_customer_id="cus_active")
+    stripe_stub = StripeStub()
+    stripe_stub._subscription_list_response = SimpleNamespace(
+        data=[StripeResourceStub(id="sub_live_obj", status="active")]
+    )
+
+    result = reconcile_tenant_subscription_status(
+        stripe_secret_key="sk_test",
+        tenant=tenant,
+        stripe_api=stripe_stub,
+    )
+
+    assert result.new_status == SubscriptionStatus.PRO
+    assert result.subscription_id == "sub_live_obj"
+    assert result.remote_status == "active"
+    assert tenant.subscription_status == SubscriptionStatus.PRO
 
 
 class FakeClientManager:

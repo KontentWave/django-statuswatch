@@ -10,7 +10,6 @@ __pycache__/
 .env.*
 !.env.example
 !backend/.env.example
-!backend/.env.mod
 !backend/.env.mod.example
 .mod-data/
 .mypy_cache/

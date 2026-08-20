@@ -36,7 +36,10 @@ services:
       - ./.mod-data/redis:/data
 
   mod_api:
-    image: ghcr.io/kontentwave/statuswatch-web:edge
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: statuswatch-mod-backend:dev
     container_name: statuswatch_mod_api
     command: python manage.py runserver 0.0.0.0:8000
     ports:
@@ -56,6 +59,7 @@ services:
       CELERY_RESULT_BACKEND: redis://mod_redis:6379/1
       LOG_TO_FILE: "1"
     volumes:
+      - ./backend:/app
       - ./logs/mod:/app/logs
     healthcheck:
       test:
@@ -66,9 +70,12 @@ services:
       retries: 5
 
   mod_worker:
-    image: ghcr.io/kontentwave/statuswatch-web:edge
+    image: statuswatch-mod-backend:dev
     container_name: statuswatch_mod_worker
     command: celery -A app worker -l info
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     depends_on:
       mod_db:
         condition: service_healthy
@@ -84,12 +91,16 @@ services:
       CELERY_RESULT_BACKEND: redis://mod_redis:6379/1
       LOG_TO_FILE: "1"
     volumes:
+      - ./backend:/app
       - ./logs/mod:/app/logs
 
   mod_beat:
-    image: ghcr.io/kontentwave/statuswatch-web:edge
+    image: statuswatch-mod-backend:dev
     container_name: statuswatch_mod_beat
     command: celery -A app beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     depends_on:
       mod_db:
         condition: service_healthy
@@ -105,4 +116,5 @@ services:
       CELERY_RESULT_BACKEND: redis://mod_redis:6379/1
       LOG_TO_FILE: "1"
     volumes:
+      - ./backend:/app
       - ./logs/mod:/app/logs
