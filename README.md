@@ -47,6 +47,15 @@ Built as a production-ready demonstration of modern web architecture, deployment
 - Python 3.12+ (pyenv recommended)
 - Node.js 20+ (nvm recommended)
 
+### Recommended Local Mode
+
+The repo currently contains two local backend paths:
+
+- the legacy stack from `compose.yaml`
+- the modular stack from `docker-compose.mod.yml`
+
+For day-to-day local work, use the modular stack plus the HTTPS Vite frontend. This is the path that currently matches the working tenant flow.
+
 ### 1. Backend Setup
 
 ```bash
@@ -54,29 +63,18 @@ Built as a production-ready demonstration of modern web architecture, deployment
 git clone https://github.com/KontentWave/django-statuswatch.git
 cd django-statuswatch
 
-# Start services (PostgreSQL + Redis)
-docker compose up -d
+# Copy the modular env template if needed
+cp backend/.env.mod.example backend/.env.mod
 
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-cd backend
-pip install -r requirements.txt
-
-# Copy environment template
-cp ../.env.example ../.env
+# Start modular backend services
+docker compose -f compose.yaml -f docker-compose.mod.yml up -d --build mod_db mod_redis mod_api mod_worker mod_beat
 
 # Run migrations
-python manage.py migrate_schemas --shared
-python manage.py migrate_schemas
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py migrate_schemas --shared
+docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api python manage.py migrate_schemas
 
-# Create superuser (optional)
-python manage.py createsuperuser
-
-# Start development server
-python manage.py runserver 0.0.0.0:8000
+# Optional: inspect backend health
+curl http://localhost:8081/health/
 ```
 
 ### 2. Frontend Setup
@@ -88,23 +86,39 @@ cd frontend
 # Install dependencies
 npm install
 
-# Copy environment template
-cp .env.example .env
-
 # Start dev server
-npm run dev
+npm run dev -- --host 0.0.0.0 --port 5173
 ```
+
+No frontend env override is required for the current working modular flow.
 
 ### 3. Access Application
 
-- **Frontend:** http://localhost:5173
-- **Backend API:** http://localhost:8000/api/
-- **Admin Panel:** http://localhost:8000/admin/
+- **Frontend:** https://localhost:5173
+- **Tenant Frontend:** https://acme.localhost:5173
+- **Modular Backend API/Health:** http://localhost:8081/
+- **Legacy Backend API/Health:** http://localhost:8003/
 
 **Create your first tenant:**
 
-1. Register at http://localhost:5173/register
-2. Your tenant will be available at `{your-org}.localhost:5173`
+1. Register at `https://localhost:5173/register`
+2. Your tenant will be available at `https://{your-org}.localhost:5173`
+
+### 4. Required Local Hosts Entry
+
+Add this to `/etc/hosts` if local tenant routing does not resolve:
+
+```text
+127.0.0.1 acme.localhost
+```
+
+### 5. Notes
+
+- If Vite finds local SSL certs, it serves HTTPS only. Use `https://...:5173`, not `http://...:5173`.
+- Accept the local browser certificate warning once if Firefox or Chromium prompts for it.
+- The modular stack builds from `backend/` and bind-mounts that source into the dev containers, so local backend code changes affect the modular API directly.
+- If you change values loaded through Docker `env_file`, recreate the containers with `up -d --build --force-recreate`; `restart` does not reload env files.
+- See [.github/docs/LOCAL_DEV_RUNBOOK.md](.github/docs/LOCAL_DEV_RUNBOOK.md) for the current working local runbook.
 
 ---
 

@@ -1483,23 +1483,15 @@ As the application has grown through Phase 1 and 2, the initial Django project s
 
 Follow this checklist whenever you need to spin up the parallel stack for refactoring or verification. All commands run from the repo root (`/home/marcel/projects/statuswatch-project`).
 
-> **Env toggle:** copy `backend/.env.mod.example` → `backend/.env.mod` and `frontend/.env.example` → `frontend/.env.development.local`, then set `VITE_BACKEND_ORIGIN=http://acme.localhost:8081`. Remove that override to fall back to the legacy stack.
+> **Env toggle:** copy `backend/.env.mod.example` → `backend/.env.mod`. The current modular compose overlay builds from local backend source and bind-mounts `backend/` into the dev containers, so workspace code changes affect `mod_api` directly. Use `frontend/.env.development.local` only if you explicitly need to override the default frontend API origin.
 
-1. **Build/tag the modular image** (once per code change):
-
-```bash
-docker build -f backend/Dockerfile -t ghcr.io/kontentwave/statuswatch-web:mod backend
-# or reuse the latest edge build locally
-docker tag ghcr.io/kontentwave/statuswatch-web:edge ghcr.io/kontentwave/statuswatch-web:mod
-```
-
-2. **Start the isolated services** (API/worker/beat + dedicated Postgres/Redis/volumes):
+1. **Build/start the isolated services** (API/worker/beat + dedicated Postgres/Redis/volumes):
 
 ```bash
-docker compose -f compose.yaml -f docker-compose.mod.yml up -d mod_db mod_redis mod_api mod_worker mod_beat
+docker compose -f compose.yaml -f docker-compose.mod.yml up -d --build mod_db mod_redis mod_api mod_worker mod_beat
 ```
 
-Logs (for quick health checks):
+2. **Inspect modular API health/logs** (recommended quick check):
 
 ```bash
 docker compose -f compose.yaml -f docker-compose.mod.yml logs -f mod_api
@@ -1529,10 +1521,10 @@ docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api \
   python manage.py create_tenant_superuser --schema=acme --email admin@acme.localhost
 ```
 
-5. **Point the frontend at the modular API:**
+5. **Point the frontend at the modular API when needed:**
 
 - Ensure `/etc/hosts` contains `127.0.0.1 acme.localhost` so the hostname resolves locally.
-- In `frontend/.env.development.local`, set `VITE_BACKEND_ORIGIN=http://acme.localhost:8081` (remove/comment later to revert to the proxyed stack).
+- In `frontend/.env.development.local`, set `VITE_BACKEND_ORIGIN=http://acme.localhost:8081` only if you need to bypass the default frontend API origin logic.
 - Restart Vite (`npm run dev`) and browse `https://acme.localhost:5173` to exercise the modular backend.
 
 6. **Tear down when finished:**
@@ -1541,7 +1533,7 @@ docker compose -f compose.yaml -f docker-compose.mod.yml exec mod_api \
 docker compose -f compose.yaml -f docker-compose.mod.yml down
 ```
 
-This process keeps the legacy stack untouched while giving the refactor a realistic environment (own DB, Redis, logs, and image tag). Re-run steps 1–4 whenever you change backend code or need a clean database for testing. Steps 5–6 are reversible toggles for frontend routing.
+This process keeps the legacy stack untouched while giving the refactor a realistic environment (own DB, Redis, logs, and isolated ports). Re-run step 1 with `--build` when container dependencies change. For normal backend edits, `mod_api` reloads from the bind-mounted source automatically; recreate `mod_worker` and `mod_beat` when Celery needs to load backend code changes. Steps 5–6 are reversible toggles for frontend routing.
 
 #### Milestone M1 – Tenant/Auth foundation _(testable)_
 
@@ -1628,6 +1620,10 @@ pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_webhook
 
 - [x] Manual smoke: call `POST /api/billing/create-checkout-session/`, `create-portal-session/`, `cancel/` via curl against `acme.localhost:8081` to confirm audit logging still flows (`logs/payments*.log`).
 - [x] Router smoke in tenant stack (`python -m pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_cancellation.py backend/tests/test_billing_webhooks.py -q`) executed on Nov 16, 2025.
+- [x] Local-dev follow-up on Aug 20, 2026: fixed a modular-stack regression where `docker-compose.mod.yml` still pulled the published `edge` image, so local backend changes never reached `mod_api`. The overlay now builds from `backend/Dockerfile` and bind-mounts `backend/` into `mod_api`, `mod_worker`, and `mod_beat`.
+- [x] Local Stripe follow-up on Aug 20, 2026: added `reconcile_tenant_subscription_status` to the `/api/auth/me/` path so the dashboard can promote a tenant to `pro` from live Stripe subscription state even when local webhook delivery is not wired. The fix also corrected Stripe SDK resource handling in `modules/billing/services.py` by reading subscription object attributes instead of dict-style `.get(...)` calls.
+- [x] Local webhook note on Aug 20, 2026: Stripe webhook delivery is still optional in local dev. A completed checkout may require a dashboard refresh so `/api/auth/me/` can reconcile the tenant from Stripe and hydrate the Pro UI state.
+- [x] Verification on Aug 20, 2026: `pytest backend/tests/test_modules_billing_services.py backend/tests/test_current_user.py -q` passed with 13 tests, and a manual modular-stack smoke test confirmed `acme.localhost:5173/dashboard` switched from Free to Pro after refresh.
 
 4. **Frontend alignment & regression tests** ✅
 
