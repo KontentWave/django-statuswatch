@@ -44,8 +44,8 @@ jobs:
             cp backend/.env.mod.example backend/.env.mod
           fi
 
-      - name: Pull backend images
-        run: docker compose pull mod_api mod_worker mod_beat
+      - name: Build modular backend images
+        run: docker compose build mod_api mod_worker mod_beat
 
       - name: Start core services (mod_db, mod_redis)
         run: docker compose up -d mod_db mod_redis
@@ -57,7 +57,7 @@ jobs:
         run: docker compose run --rm mod_api python manage.py reset_e2e_data --force
 
       - name: Start backend services
-        run: docker compose up -d mod_api mod_worker mod_beat
+        run: docker compose up -d --build mod_api mod_worker mod_beat
 
       - name: Wait for backend health
         run: |
