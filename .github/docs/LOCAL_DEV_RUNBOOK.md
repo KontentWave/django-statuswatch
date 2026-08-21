@@ -64,6 +64,7 @@ npm run dev -- --host 0.0.0.0 --port 5173
 
 If local dev certificates exist at the configured paths, Vite serves HTTPS only. In that case, use `https://...:5173`, not `http://...:5173`.
 You may need to accept the local browser certificate warning once.
+If the configured certificate only covers `localhost` and not `acme.localhost`, direct tenant-subdomain visits can trigger browser certificate warnings or blank pages during login handoff. For demo/local verification, either accept the browser warning for `acme.localhost` or use a dev certificate whose SAN includes both `localhost` and `acme.localhost`.
 
 ## Working URLs
 
@@ -79,6 +80,11 @@ You may need to accept the local browser certificate warning once.
 - Use the demo login button on the homepage
 - You should land on `https://acme.localhost:5173/dashboard`
 - Billing should open at `https://acme.localhost:5173/billing`
+
+If the demo login button stalls on the public origin, verify two local prerequisites first:
+
+- the `acme` tenant still has a single canonical `jwt@example.com` demo user with `email_verified=True`
+- the browser trusts the HTTPS certificate presented for `https://acme.localhost:5173`
 
 ## Legacy Stack Notes
 

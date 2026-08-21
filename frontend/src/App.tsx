@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import Providers from "@/app/providers";
 import { AppRouter } from "@/app/router";
 import { api } from "@/lib/api";
+import { shouldSkipTenantValidation } from "@/lib/tenant-validation";
 
 /**
  * Check if we're on a subdomain (potential tenant)
@@ -46,6 +47,12 @@ async function validateTenantSubdomain() {
     return; // On public domain, no validation needed
   }
 
+  if (
+    shouldSkipTenantValidation(window.location.pathname, window.location.hash)
+  ) {
+    return;
+  }
+
   try {
     // Try to ping the API - invalid tenants will fail
     await api.get("/ping/");
@@ -53,7 +60,7 @@ async function validateTenantSubdomain() {
   } catch {
     // Invalid tenant subdomain - redirect to public domain
     console.warn(
-      "Invalid tenant subdomain detected, redirecting to public domain"
+      "Invalid tenant subdomain detected, redirecting to public domain",
     );
     const publicDomain = getPublicDomain();
     const port = window.location.port ? `:${window.location.port}` : "";

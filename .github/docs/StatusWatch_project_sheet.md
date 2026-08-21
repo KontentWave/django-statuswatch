@@ -1639,6 +1639,9 @@ pytest backend/tests/test_billing_checkout.py backend/tests/test_billing_webhook
   Output: 4 files, 16 tests passing (`BillingPage`, `BillingSuccessPage`, `BillingCancelPage`, and `lib/billing-client` contract specs) in ~4.7s.
 
 - Dashboard/endpoint surfaces already consume the same barrel for monitoring DTOs, so both billing and monitoring React entry points are decoupled from client implementations.
+- Local auth follow-up on Aug 21, 2026: the public homepage demo login flow was hardened for cross-subdomain session transfer. `frontend/src/App.tsx` now skips tenant-subdomain validation for the `/login#session=...` handoff route, and `frontend/src/pages/Home.tsx` now extracts string messages from structured backend auth errors instead of crashing the SPA when login returns an object-shaped payload.
+- Targeted frontend validation on Aug 21, 2026: `src/App.test.tsx` covers the new `shouldSkipTenantValidation` helper, and manual local verification confirmed the homepage demo login redirected back to the `acme` dashboard once the duplicate/unverified `jwt@example.com` demo-user data was cleaned up.
+- Local HTTPS note on Aug 21, 2026: the current dev certificate may cover only `localhost`. When that happens, `https://acme.localhost:5173` can still require a trusted browser exception or a SAN that includes `acme.localhost` even though the underlying login/session-transfer code path is functioning.
 
 5. **Done criteria & rollback**
 

@@ -7,6 +7,23 @@ import { storeAuthTokens } from "@/lib/auth";
 import { logAuthEvent } from "@/lib/auth-logger";
 import { initiateTenantSessionTransfer } from "@/lib/tenant-session";
 
+function extractMessage(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    "message" in value &&
+    typeof (value as { message?: unknown }).message === "string"
+  ) {
+    return (value as { message: string }).message;
+  }
+
+  return null;
+}
+
 export default function Home() {
   const loginDemo = async () => {
     logAuthEvent("LOGIN_ATTEMPT", {
@@ -56,16 +73,18 @@ export default function Home() {
         toast.error("No tenant domain in response");
       }
     } catch (error: unknown) {
-      const errorMsg =
+      const errorData =
         typeof error === "object" && error !== null && "response" in error
           ? (
               error as {
-                response?: { data?: { error?: string; detail?: string } };
+                response?: { data?: { error?: unknown; detail?: unknown } };
               }
-            ).response?.data?.error ||
-            (error as { response?: { data?: { detail?: string } } }).response
-              ?.data?.detail
+            ).response?.data
           : undefined;
+      const errorMsg =
+        extractMessage(errorData?.error) ??
+        extractMessage(errorData?.detail) ??
+        (error instanceof Error ? error.message : undefined);
 
       logAuthEvent("LOGIN_FAILED", {
         username: "jwt@example.com",
